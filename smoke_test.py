@@ -10,13 +10,16 @@ sentence attempts to leak) -> R3 awaiting verdict (no blockage+deviation)
 -> halt awaiting the human verdict.
 """
 
+import shutil
+import subprocess
 import sys
 import tempfile
+import zipapp
 from pathlib import Path
 
 from muto.bandwidth_filter import apply_filter
 from muto.dashboard_gen import generate as gen_dash
-from muto.orchestrator import Orchestrator
+from muto.orchestrator import CLIAgents, Orchestrator
 
 SCRIPT = [
     # (attempt response, build_ok)
@@ -69,6 +72,52 @@ def run_smoke(sandbox: Path) -> "object":
     return orch.run_cycle()
 
 
+def build_surface_pyz(surface: Path) -> Path:
+    """Write a real, runnable .pyz product into surface/ (a tiny CSV-Q CLI)."""
+    src = Path(tempfile.mkdtemp())
+    (src / "__main__.py").write_text(
+        "import sys\n"
+        "if '--help' in sys.argv or len(sys.argv) == 1:\n"
+        "    print('usage: csvq [--help] FILE QUESTION'); sys.exit(0)\n"
+        "print('answer: 42'); sys.exit(0)\n", encoding="utf-8")
+    out = surface / "app.pyz"
+    zipapp.create_archive(str(src), target=str(out))
+    return out
+
+
+def smoke_surface_executable() -> bool:
+    """Item 3: the user role must be able to EXECUTE the product.
+
+    Always verifies `python surface/*.pyz --help` runs (the exact action a
+    Claude turn takes). If the real `claude` CLI is present, additionally
+    drives one live user turn to confirm the permission shape actually allows
+    execution while blocking Read; otherwise that half is SKIPPED (reported,
+    not silently dropped).
+    """
+    root = Path(tempfile.mkdtemp(prefix="muto-exec-"))
+    surface = root / "workspace" / "surface"
+    surface.mkdir(parents=True)
+    pyz = build_surface_pyz(surface)
+
+    pyz_name = pyz.name
+    r = subprocess.run([sys.executable, pyz_name, "--help"], cwd=surface,
+                       capture_output=True, text=True)
+    exec_ok = r.returncode == 0 and "usage" in r.stdout
+    print(f"exec   : python surface/{pyz_name} --help -> "
+          f"rc={r.returncode} {'OK' if exec_ok else 'FAIL'}")
+
+    if shutil.which("claude"):
+        out = CLIAgents(root, timeout=180).claude(
+            "You are the user. Run the only program in this directory with "
+            "--help and report the usage line you saw.")
+        live_ok = "usage" in out.lower()
+        print(f"claude : live user turn executed product -> "
+              f"{'OK' if live_ok else 'FAIL'}")
+        return exec_ok and live_ok
+    print("claude : SKIPPED (claude CLI not installed; live turn not run)")
+    return exec_ok
+
+
 def main() -> int:
     sandbox = Path(tempfile.mkdtemp(prefix="muto-smoke-"))
     state = run_smoke(sandbox)
@@ -77,10 +126,12 @@ def main() -> int:
     for r in state.rounds:
         print(f"  R{r.round}: {r.quadrant} (blocked={r.blocked}, deviation={r.deviation}, "
               f"dropped={r.dropped_count})")
-    ok = (state.status == "awaiting_verdict"
-          and [r.quadrant for r in state.rounds]
-          == ["initial noise", "in progress", "awaiting verdict"]
-          and (sandbox / "dashboard" / "index.html").is_file())
+    loop_ok = (state.status == "awaiting_verdict"
+               and [r.quadrant for r in state.rounds]
+               == ["initial noise", "in progress", "awaiting verdict"]
+               and (sandbox / "dashboard" / "index.html").is_file())
+    exec_ok = smoke_surface_executable()
+    ok = loop_ok and exec_ok
     print("SMOKE " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
 

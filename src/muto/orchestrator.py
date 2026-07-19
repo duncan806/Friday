@@ -69,10 +69,23 @@ class CLIAgents:
 
     def claude(self, prompt: str) -> str:
         surface = self.root / "workspace" / "surface"
+        # The user role must be able to EXECUTE the product, but never edit
+        # files (Edit,Write) or read source (Read,Glob,Grep). Blocking Read is
+        # the crux: it shuts down .pyz unpacking and source browsing via the
+        # file tools. Empirically:
+        #   - `--permission-mode plan` blocks execution itself → the user
+        #     could not use the product at all. Wrong.
+        #   - `bypassPermissions` maps to --dangerously-skip-permissions,
+        #     which is refused under root. Fragile.
+        # The robust shape is an allowlist: allow just Bash (runs
+        # non-interactively in headless -p mode), and hard-block the file
+        # tools. Bash stays powerful, so assert_claude_isolation is re-run
+        # after the turn as post-hoc verification that surface/ stayed the
+        # boundary (raw `cat ../src` reads remain a documented residual, U4).
         r = subprocess.run(
             ["claude", "-p", prompt,
-             "--permission-mode", "plan",
-             "--disallowedTools", "Edit,Write"],
+             "--allowedTools", "Bash",
+             "--disallowedTools", "Edit,Write,Read,Glob,Grep"],
             cwd=surface, capture_output=True, text=True, timeout=self.timeout)
         return r.stdout
 
@@ -182,6 +195,11 @@ class Orchestrator:
                 attempt_prompt = self._load_prompt("claude_user.md", task=task_text,
                                                    round=n, mode="attempt")
                 raw = self.agents.claude(attempt_prompt)
+                # post-hoc verification: the Bash-enabled turn must not have
+                # bridged surface/ to anything outside it (e.g. a new escaping
+                # symlink or src/ relocated inside surface). Structural only—
+                # it cannot audit a direct `cat ../src` Bash read (README U4).
+                assert_claude_isolation(workspace)
                 report = parse_claude_attempt(raw)
 
                 # c. bandwidth filter

@@ -55,3 +55,10 @@ filesystem enforcement cannot reach; residual risk remains at the prompt layer.
 U3. Judging the judgment of inevitability—terminates at the human, and this is
 not a defect but the system's honest declaration of its boundary. Accumulating
 the verdicts/ casebook is the only path of improvement.
+U4. The user role needs Bash to actually use the product, so its file tools
+(Edit/Write/Read/Glob/Grep) are blocked but Bash is not. Since workspace/src
+and workspace/surface are siblings, a determined `cat ../src/...` from Bash can
+still read source. The structural isolation asserts (run before and after each
+turn) catch symlink bridges and src relocation, not raw relative-path reads.
+Full prevention needs process-level sandboxing; until then this is a known,
+observable residual—not hidden.

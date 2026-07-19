@@ -148,3 +148,39 @@ def test_surface_is_file_voids_round_without_report(tmp_path):
     # a wrong report is worse than no report: none is written
     assert not (root / "reports" / "round_001.md").exists()
     assert "INTEGRITY_BREACH" in (root / "reports" / "orchestrator.log").read_text()
+
+
+def test_claude_command_allows_exec_and_blocks_read(tmp_path, monkeypatch):
+    import muto.orchestrator as om
+    from muto.orchestrator import CLIAgents
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["cwd"] = kw.get("cwd")
+        class R:
+            stdout = "ok"
+            returncode = 0
+        return R()
+    monkeypatch.setattr(om.subprocess, "run", fake_run)
+    (tmp_path / "workspace" / "surface").mkdir(parents=True)
+
+    CLIAgents(tmp_path, timeout=10).claude("hello")
+    cmd = captured["cmd"]
+    assert "plan" not in cmd                     # execution must not be blocked
+    assert cmd[cmd.index("--allowedTools") + 1] == "Bash"   # execution allowed
+    disallowed = cmd[cmd.index("--disallowedTools") + 1]
+    for tool in ("Edit", "Write", "Read", "Glob", "Grep"):
+        assert tool in disallowed               # Read blocked = no source/.pyz unpack
+    assert str(captured["cwd"]).endswith("surface")
+
+
+def test_surface_pyz_executes(tmp_path):
+    import subprocess as sp
+    import sys
+    from smoke_test import build_surface_pyz
+    surface = tmp_path / "workspace" / "surface"
+    surface.mkdir(parents=True)
+    pyz = build_surface_pyz(surface)
+    r = sp.run([sys.executable, pyz.name, "--help"], cwd=surface,
+               capture_output=True, text=True)
+    assert r.returncode == 0 and "usage" in r.stdout
