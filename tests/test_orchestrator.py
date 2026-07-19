@@ -93,3 +93,27 @@ def test_parse_fallback_treats_garbage_as_stuck():
     rep = parse_claude_attempt("완전 자유 서술 텍스트")
     assert rep["where_stuck"] == "완전 자유 서술 텍스트"
     assert rep["deviation"] is False
+
+
+def test_stop_flag_aborts_before_next_round(tmp_path):
+    root = make_root(tmp_path)
+
+    class StopAfterFirst(ScriptedAgents):
+        def codex(self, prompt):
+            (root / "stop.flag").write_text("stop")
+            return super().codex(prompt)
+
+    orch = Orchestrator(root=root, agents=StopAfterFirst([("멈춤", False, True)] * 5))
+    state = orch.run_cycle()
+    assert state.status == "aborted"
+    assert len(state.rounds) == 1
+    assert "stop.flag detected" in (root / "reports" / "orchestrator.log").read_text()
+
+
+def test_stale_stop_flag_cleared_at_cycle_start(tmp_path):
+    root = make_root(tmp_path)
+    (root / "stop.flag").write_text("stale")
+    orch = Orchestrator(root=root, agents=ScriptedAgents([("멈춤", False, True)] * 5))
+    state = orch.run_cycle()
+    assert state.status == "budget_exhausted"
+    assert len(state.rounds) == 5

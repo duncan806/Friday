@@ -1,7 +1,12 @@
 """muto dashboard generator—DOS-style static single-file HTML. (spec §8)
 
-No server. JS for animation only. Gradients, rounded corners, and shadows
-are banned outright.
+No server. JS for animation only, plus the single [중단] control (spec §7:
+the stop button is one of the four permitted human controls). Gradients,
+rounded corners, and shadows are banned outright.
+
+Stop signal is file-based: the button saves a stop.flag file (File System
+Access API save dialog, download fallback) which the human places in the
+muto root; the orchestrator checks for it before every round.
 
 Mascot invariant: the Codex sprite and the Claude sprite roam disjoint
 regions and never meet—a visualization of information asymmetry.
@@ -70,6 +75,9 @@ def generate(state, root: Path) -> Path:
   .meet2 {{ left:{CLAUDE_ROAM[1]}%; animation: meeta 4s linear forwards; }}
   @keyframes meetc {{ to {{ left:47%; }} }}
   @keyframes meeta {{ to {{ left:53%; }} }}
+  #stop {{ background:#AAAAAA; color:#0000AA; border:2px solid #FFFF55;
+           font-family:inherit; font-size:inherit; padding:2px 10px; cursor:pointer; }}
+  #stophint {{ color:#FFFF55; }}
 </style></head><body>
 <pre class="title">
 ╔══════════════════════════════════════════════╗
@@ -86,7 +94,24 @@ def generate(state, root: Path) -> Path:
 ╚══════════════════════════════════════════════╝
 status: {state.status}
 </pre>
+<p><button id="stop">[ 중단 ]</button> <span id="stophint"></span></p>
 <div class="stage">{mascots}</div>
+<script>
+document.getElementById('stop').onclick = async () => {{
+  const blob = new Blob(["stop"], {{type: "text/plain"}});
+  const hint = document.getElementById('stophint');
+  if (window.showSaveFilePicker) {{
+    try {{
+      const h = await showSaveFilePicker({{suggestedName: "stop.flag"}});
+      const w = await h.createWritable(); await w.write(blob); await w.close();
+    }} catch (e) {{ return; }}
+  }} else {{
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = "stop.flag"; a.click();
+  }}
+  hint.textContent = "stop.flag를 muto 폴더에 두면 다음 라운드 전에 정지합니다";
+}};
+</script>
 </body></html>"""
     out = root / "dashboard" / "index.html"
     out.parent.mkdir(parents=True, exist_ok=True)

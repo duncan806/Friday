@@ -202,8 +202,17 @@ class Orchestrator:
 
     # ── cycle ──
     def run_cycle(self) -> CycleState:
+        # File-based stop signal: the dashboard's [중단] button drops
+        # stop.flag into the root; the loop checks it before every round.
+        stop_flag = self.root / "stop.flag"
+        stop_flag.unlink(missing_ok=True)  # clear a stale flag from a previous run
+        self.dashboard_fn(self.state, self.root)  # initial render for the launcher
         budget = int(self.config.get("round_budget", 10))
         for n in range(1, budget + 1):
+            if stop_flag.exists():
+                self.state.status = "aborted"
+                self._log(f"stop.flag detected before round {n}: aborted")
+                break
             result = self.run_round(n)
             if not result.void and result.quadrant == "판정 대기":
                 self.state.status = "awaiting_verdict"

@@ -47,3 +47,9 @@ def test_dos_aesthetics(tmp_path):
     assert "#0000AA" in html and "╔" in html and "monospace" in html
     for banned in ("gradient", "border-radius"):
         assert banned not in html
+
+
+def test_stop_button_present_with_flag_wiring(tmp_path):
+    html = generate(CycleState(), tmp_path).read_text()
+    assert 'id="stop"' in html and "[ 중단 ]" in html
+    assert "stop.flag" in html and "showSaveFilePicker" in html
