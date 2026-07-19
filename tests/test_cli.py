@@ -49,3 +49,43 @@ def test_run_checks_stop_at_first_failure(monkeypatch):
     assert not ok
     assert checks[-1]["name"] == "CLAUDE CLI" and checks[-1]["state"] == "fail"
     assert len(checks) == 1
+
+
+def test_init_makes_workspace_a_git_repo(tmp_path):
+    from muto import gitutil
+    in_dir(tmp_path, cmd_init)
+    assert gitutil.is_repo(tmp_path / "workspace")
+
+
+def test_workspace_git_check_reported_separately(tmp_path, monkeypatch):
+    # all CLI/auth probes pass; only the workspace-git state varies
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(cli, "_auth_probe", lambda cmd: True)
+
+    in_dir(tmp_path, cmd_init)  # creates workspace/.git
+    checks, ok = cli.run_checks(tmp_path)
+    assert ok
+    names = [c["name"] for c in checks]
+    assert "WORKSPACE GIT" in names
+    assert next(c for c in checks if c["name"] == "WORKSPACE GIT")["state"] == "ok"
+
+    import shutil as _sh
+    _sh.rmtree(tmp_path / "workspace" / ".git")
+    checks, ok = cli.run_checks(tmp_path)
+    assert not ok
+    wg = next(c for c in checks if c["name"] == "WORKSPACE GIT")
+    assert wg["state"] == "fail" and "muto init" in wg["hint"]
+    # a failed git repo is NOT reported as a CODEX AUTH failure
+    assert next(c for c in checks if c["name"] == "CODEX AUTH")["state"] == "ok"
+
+
+def test_codex_auth_probe_skips_git_repo_check(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/" + name)
+    def fake_probe(cmd):
+        if cmd[0] == "codex":
+            seen["cmd"] = cmd
+        return True
+    monkeypatch.setattr(cli, "_auth_probe", fake_probe)
+    cli.run_checks(None)
+    assert "--skip-git-repo-check" in seen["cmd"]

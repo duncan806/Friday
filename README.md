@@ -35,6 +35,11 @@ Other commands: `muto doctor` (POST checks in the terminal), `muto run`
 (start the cycle directly), `muto stop` (halt before the next round).
 On Windows, double-clicking `muto.bat` is equivalent to running `muto`.
 
+`muto init` turns `workspace/` into a git repo (git must be installed).
+Codex requires a repo to run, and the round loop commits `workspace/` after
+every Codex turn (`muto: round N`), so the human can observe Codex-side
+change history as per-round diffs (spec §7).
+
 ## Scope
 
 Apply muto to tasks with a clear surface (a CLI interface, etc.), observable

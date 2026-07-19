@@ -24,6 +24,7 @@ from pathlib import Path
 
 import yaml
 
+from . import gitutil
 from .dashboard_gen import generate, write_status
 from .orchestrator import CycleState, Orchestrator
 
@@ -81,12 +82,17 @@ def run_checks(root: Path | None, on_update=None) -> tuple[list, bool]:
         ("CLAUDE AUTH",
          lambda: _auth_probe(["claude", "-p", "reply with exactly: ok"]),
          "run claude once and complete the browser login"),
+        # --skip-git-repo-check so a missing repo can't masquerade as an auth
+        # failure; this probe measures auth validity only (matches CLAUDE AUTH).
         ("CODEX AUTH",
          lambda: _auth_probe(["codex", "exec", "--sandbox", "read-only",
-                              "reply with exactly: ok"]),
+                              "--skip-git-repo-check", "reply with exactly: ok"]),
          "run codex login"),
     ]
     if root is not None:
+        plan.append(("WORKSPACE GIT",
+                     lambda: gitutil.is_repo(root / "workspace"),
+                     "run: muto init  (workspace/ must be a git repo so Codex can commit per-round diffs)"))
         plan.append(("TASK FILE",
                      lambda: (root / "task" / "task.md").is_file(),
                      "write task/task.md first (a template was created by muto init)"))
@@ -131,6 +137,12 @@ def cmd_init() -> int:
         task.write_text(
             resources.files("muto").joinpath("data/task_template.md")
             .read_text(encoding="utf-8"), encoding="utf-8")
+    # workspace/ becomes its own git repo so Codex can run and leave
+    # per-round diff history (spec §7).
+    if not gitutil.init_repo(root / "workspace"):
+        print("  warning: git not found—workspace/ is not a repo; "
+              "Codex will refuse to build until git is installed and "
+              "you re-run muto init.")
     generate(CycleState(), root)
     write_status(root, "boot")
     print(f"muto workspace initialized in {root}")

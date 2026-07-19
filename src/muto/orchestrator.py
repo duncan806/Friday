@@ -27,6 +27,7 @@ from pathlib import Path
 
 import yaml
 
+from .gitutil import commit_round
 from .integrity import (
     IntegrityBreach,
     assert_claude_isolation,
@@ -185,6 +186,9 @@ class Orchestrator:
                 path = self._p("reports", f"round_{n:03d}.md")
                 path.write_text(path.read_text(encoding="utf-8") +
                                 "\nbuild_failure: product cannot ship\n", encoding="utf-8")
+            # snapshot the workspace so Codex's changes leave per-round
+            # history (no-op when workspace/ is not a git repo)
+            commit_round(self._p("workspace"), n)
 
             blocked = bool(str(kept.get("where_stuck", "")).strip()) or not build_ok
             deviation = bool(report.get("deviation", False))
