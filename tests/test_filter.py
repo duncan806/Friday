@@ -1,4 +1,4 @@
-from muto.bandwidth_filter import apply_filter  # noqa: E402
+from friday.bandwidth_filter import apply_filter  # noqa: E402
 
 
 def test_intent_field_always_blocked():

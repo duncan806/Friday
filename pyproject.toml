@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "muto"
+name = "friday"
 version = "0.1.0"
 description = "Validation system: two AI agents converge on software through blockage reports under enforced information asymmetry"
 readme = "README.md"
@@ -12,15 +12,15 @@ license = { text = "MIT" }
 dependencies = ["pyyaml>=6.0"]
 
 [project.scripts]
-muto = "muto.cli:main"
+friday = "friday.cli:main"
 
 # Windows: a no-console (pythonw) entry so a desktop shortcut opens only the
-# app window—no second terminal window. On other platforms it behaves like muto.
+# app window—no second terminal window. On other platforms it behaves like friday.
 [project.gui-scripts]
-mutow = "muto.cli:main"
+fridayw = "friday.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-muto = ["data/**"]
+friday = ["data/**"]

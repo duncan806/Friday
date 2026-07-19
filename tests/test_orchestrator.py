@@ -1,4 +1,4 @@
-from muto.orchestrator import Orchestrator, parse_claude_attempt  # noqa: E402
+from friday.orchestrator import Orchestrator, parse_claude_attempt  # noqa: E402
 
 
 class ScriptedAgents:
@@ -65,13 +65,19 @@ def test_build_failure_is_blockage(tmp_path):
 
 def test_integrity_breach_voids_round(tmp_path):
     import os
+    import pytest
     root = make_root(tmp_path)
-    os.symlink(root / "workspace" / "src", root / "workspace" / "surface" / "leak")
+    try:
+        os.symlink(root / "workspace" / "src", root / "workspace" / "surface" / "leak")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted in this environment")
     orch = Orchestrator(root=root, agents=ScriptedAgents([("", True, True)] * 5))
     state = orch.run_cycle()
-    assert all(r.void for r in state.rounds)
-    assert "INTEGRITY_BREACH" in (root / "reports" / "orchestrator.log").read_text()
-    assert state.status == "budget_exhausted"
+    # A persistent breach halts the cycle immediately: a wrong report is worse
+    # than none, so the loop stops at the first void round (orchestrator §run_cycle).
+    assert state.status == "integrity_breach"
+    assert len(state.rounds) == 1 and state.rounds[0].void
+    assert "INTEGRITY_BREACH" in (root / "reports" / "orchestrator.log").read_text(encoding="utf-8")
 
 
 def test_filter_fn_wiring_writes_dropped(tmp_path):
@@ -151,14 +157,15 @@ def test_surface_is_file_voids_round_without_report(tmp_path):
 
 
 def test_claude_command_allows_exec_and_blocks_read(tmp_path, monkeypatch):
-    import muto.orchestrator as om
-    from muto.orchestrator import CLIAgents
+    import friday.orchestrator as om
+    from friday.orchestrator import CLIAgents
     captured = {}
     def fake_run(cmd, **kw):
         captured["cmd"] = cmd
         captured["cwd"] = kw.get("cwd")
         class R:
             stdout = "ok"
+            stderr = ""
             returncode = 0
         return R()
     monkeypatch.setattr(om.subprocess, "run", fake_run)

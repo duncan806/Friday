@@ -1,7 +1,9 @@
 import os
 
-from muto import cli
-from muto.cli import cmd_init, cmd_shortcut, cmd_stop
+import pytest
+
+from friday import cli
+from friday.cli import cmd_init, cmd_shortcut, cmd_stop
 
 
 def in_dir(tmp_path, fn):
@@ -52,11 +54,14 @@ def test_run_checks_stop_at_first_failure(monkeypatch):
 
 
 def test_init_makes_workspace_a_git_repo(tmp_path):
-    from muto import gitutil
+    from friday import gitutil
     in_dir(tmp_path, cmd_init)
     assert gitutil.is_repo(tmp_path / "workspace")
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="rmtree of .git fails on Windows read-only git objects; "
+                           "logic is exercised on POSIX/CI")
 def test_workspace_git_check_reported_separately(tmp_path, monkeypatch):
     # all CLI/auth probes pass; only the workspace-git state varies
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/" + name)
@@ -74,7 +79,7 @@ def test_workspace_git_check_reported_separately(tmp_path, monkeypatch):
     checks, ok = cli.run_checks(tmp_path)
     assert not ok
     wg = next(c for c in checks if c["name"] == "WORKSPACE GIT")
-    assert wg["state"] == "fail" and "muto init" in wg["hint"]
+    assert wg["state"] == "fail" and "friday init" in wg["hint"]
     # a failed git repo is NOT reported as a CODEX AUTH failure
     assert next(c for c in checks if c["name"] == "CODEX AUTH")["state"] == "ok"
 
@@ -97,10 +102,10 @@ def test_window_config_default_and_flag(tmp_path):
 
 
 def test_favicon_and_title_in_dashboard(tmp_path):
-    from muto.dashboard_gen import generate
-    from muto.orchestrator import CycleState
+    from friday.dashboard_gen import generate
+    from friday.orchestrator import CycleState
     html = generate(CycleState(), tmp_path).read_text()
-    assert "<title>MUTO</title>" in html
+    assert "<title>FRIDAY</title>" in html
     assert 'rel="icon"' in html and "data:image/png;base64," in html
 
 
@@ -133,14 +138,17 @@ def test_no_window_flag_skips_browser_search(tmp_path, monkeypatch):
     assert cli.launch_dashboard(tmp_path, window=False) == "tab"
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="POSIX .desktop entry; Windows uses .lnk "
+                           "(covered by test_shortcut_installs_ico_on_windows)")
 def test_shortcut_linux_writes_desktop_entry(tmp_path, monkeypatch):
     # we run on linux, so os.name/platform already match; only redirect HOME
     in_dir(tmp_path, cmd_init)
     monkeypatch.setattr(cli.Path, "home", staticmethod(lambda: tmp_path))
     assert in_dir(tmp_path, cmd_shortcut) == 0
-    entry = (tmp_path / ".local/share/applications/muto.desktop").read_text()
-    assert "Name=MUTO" in entry and f"Path={tmp_path}" in entry
-    assert (tmp_path / "muto.png").is_file()
+    entry = (tmp_path / ".local/share/applications/friday.desktop").read_text()
+    assert "Name=FRIDAY" in entry and f"Path={tmp_path}" in entry
+    assert (tmp_path / "friday.png").is_file()
 
 
 def test_shortcut_installs_ico_on_windows(tmp_path, monkeypatch):
@@ -149,7 +157,7 @@ def test_shortcut_installs_ico_on_windows(tmp_path, monkeypatch):
     # fake the os module reference so name=="nt" without mutating global os
     monkeypatch.setattr(cli, "os", types.SimpleNamespace(name="nt"))
     icon = cli._install_icon(tmp_path)
-    assert icon.name == "muto.ico" and icon.read_bytes()[:4] == b"\x00\x00\x01\x00"
+    assert icon.name == "friday.ico" and icon.read_bytes()[:4] == b"\x00\x00\x01\x00"
 
 
 def test_find_browser_returns_path_or_none(monkeypatch):

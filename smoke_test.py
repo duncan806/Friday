@@ -1,9 +1,9 @@
-"""muto smoke test—first task (§10), 3 rounds. (spec §12-⑥)
+"""friday smoke test—first task (§10), 3 rounds. (spec §12-⑥)
 
 Drives the whole loop (asserts -> filter -> report -> build -> dashboard)
 with scripted mock agents instead of the real CLIs. Runs in a sandbox
 workspace; prompts come from the packaged defaults, exactly as an installed
-`muto run` would resolve them.
+`friday run` would resolve them.
 
 Script: R1 initial noise -> R2 in progress (blockage+deviation, one intent
 sentence attempts to leak) -> R3 awaiting verdict (no blockage+deviation)
@@ -17,9 +17,9 @@ import tempfile
 import zipapp
 from pathlib import Path
 
-from muto.bandwidth_filter import apply_filter
-from muto.dashboard_gen import generate as gen_dash
-from muto.orchestrator import CLIAgents, Orchestrator
+from friday.bandwidth_filter import apply_filter
+from friday.dashboard_gen import generate as gen_dash
+from friday.orchestrator import CLIAgents, Orchestrator
 
 SCRIPT = [
     # (attempt response, build_ok)
@@ -94,7 +94,7 @@ def smoke_surface_executable() -> bool:
     execution while blocking Read; otherwise that half is SKIPPED (reported,
     not silently dropped).
     """
-    root = Path(tempfile.mkdtemp(prefix="muto-exec-"))
+    root = Path(tempfile.mkdtemp(prefix="friday-exec-"))
     surface = root / "workspace" / "surface"
     surface.mkdir(parents=True)
     pyz = build_surface_pyz(surface)
@@ -119,7 +119,7 @@ def smoke_surface_executable() -> bool:
 
 
 def main() -> int:
-    sandbox = Path(tempfile.mkdtemp(prefix="muto-smoke-"))
+    sandbox = Path(tempfile.mkdtemp(prefix="friday-smoke-"))
     state = run_smoke(sandbox)
     print(f"sandbox: {sandbox}")
     print(f"status : {state.status}")

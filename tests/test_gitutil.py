@@ -1,7 +1,7 @@
 import subprocess
 
-from muto import gitutil
-from muto.orchestrator import Orchestrator
+from friday import gitutil
+from friday.orchestrator import Orchestrator
 from tests.test_orchestrator import ScriptedAgents, make_root
 
 
@@ -14,7 +14,7 @@ def test_init_repo_creates_baseline(tmp_path):
     ws = tmp_path / "workspace"
     assert gitutil.init_repo(ws)
     assert gitutil.is_repo(ws)
-    assert _log(ws) == ["muto: round 0 (workspace initialized)"]
+    assert _log(ws) == ["friday: round 0 (workspace initialized)"]
 
 
 def test_init_repo_idempotent(tmp_path):
@@ -23,7 +23,7 @@ def test_init_repo_idempotent(tmp_path):
     (ws / "keep.txt").write_text("x")
     gitutil.commit_round(ws, 1)
     gitutil.init_repo(ws)  # must not re-init or wipe history
-    assert _log(ws) == ["muto: round 1", "muto: round 0 (workspace initialized)"]
+    assert _log(ws) == ["friday: round 1", "friday: round 0 (workspace initialized)"]
 
 
 def test_is_repo_false_for_plain_dir(tmp_path):
@@ -44,5 +44,5 @@ def test_orchestrator_commits_each_round_in_git_workspace(tmp_path):
     orch.run_round(1)
     orch.run_round(2)
     msgs = _log(root / "workspace")
-    assert msgs[:3] == ["muto: round 2", "muto: round 1",
-                        "muto: round 0 (workspace initialized)"]
+    assert msgs[:3] == ["friday: round 2", "friday: round 1",
+                        "friday: round 0 (workspace initialized)"]

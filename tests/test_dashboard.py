@@ -1,7 +1,7 @@
 import re
-from muto import dashboard_gen  # noqa: E402
-from muto.dashboard_gen import CLAUDE_ROAM, CODEX_ROAM, generate  # noqa: E402
-from muto.orchestrator import CycleState, RoundResult  # noqa: E402
+from friday import dashboard_gen  # noqa: E402
+from friday.dashboard_gen import CLAUDE_ROAM, CODEX_ROAM, generate  # noqa: E402
+from friday.orchestrator import CycleState, RoundResult  # noqa: E402
 
 
 def rr(n, blocked, deviation, quadrant, void=False):
@@ -64,7 +64,7 @@ def test_boot_screen_and_poller(tmp_path):
 def test_generate_writes_cycle_status(tmp_path):
     generate(CycleState(rounds=[rr(1, True, False, "initial noise")]), tmp_path)
     status = (tmp_path / "dashboard" / "status.js").read_text()
-    assert status.startswith("window.MUTO_STATUS = ")
+    assert status.startswith("window.FRIDAY_STATUS = ")
     assert '"phase": "cycle"' in status and '"round": 1' in status
 
 
@@ -79,7 +79,7 @@ def test_write_status_boot_phase(tmp_path):
 def test_crt_font_embedded(tmp_path):
     html = generate(CycleState(), tmp_path).read_text()
     assert "@font-face" in html and "font/woff2;base64," in html
-    assert "'MutoVGA','Px437 IBM VGA 8x16',monospace" in html
+    assert "'FridayVGA','Px437 IBM VGA 8x16',monospace" in html
 
 
 def test_crt_effects_restrained(tmp_path):

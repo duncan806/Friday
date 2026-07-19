@@ -1,10 +1,10 @@
-"""Build the muto app icon into package data (pure Python, no PIL).
+"""Build the friday app icon into package data (pure Python, no PIL).
 
 From one 16x16 pixel map produce:
-  src/muto/data/favicon.png   (48x48 RGBA)  — embedded in the dashboard <head>
-  src/muto/data/muto.ico      (16/32/48)    — used by `muto shortcut` on Windows
+  src/friday/data/favicon.png   (48x48 RGBA)  — embedded in the dashboard <head>
+  src/friday/data/friday.ico      (16/32/48)    — used by `friday shortcut` on Windows
 
-The mascot is the muto "mute" sprite: a CRT-headed blob in Hermès orange.
+The mascot is the friday "mute" sprite: a CRT-headed blob in Hermès orange.
 This orange lives only in the app icon (browser/taskbar chrome), never on the
 dashboard canvas, so the on-screen DOS 16-color palette is untouched.
 
@@ -15,7 +15,7 @@ import struct
 import zlib
 from pathlib import Path
 
-DATA = Path(__file__).resolve().parent.parent / "src" / "muto" / "data"
+DATA = Path(__file__).resolve().parent.parent / "src" / "friday" / "data"
 
 # Hermès orange body, warm highlight, near-black eyes; '.' = transparent.
 PALETTE = {
@@ -102,7 +102,7 @@ def _ico(scales: list) -> bytes:
 def build() -> tuple:
     DATA.mkdir(parents=True, exist_ok=True)
     favicon = DATA / "favicon.png"
-    ico = DATA / "muto.ico"
+    ico = DATA / "friday.ico"
     favicon.write_bytes(_png(3))          # 48x48
     ico.write_bytes(_ico([1, 2, 3]))      # 16 / 32 / 48
     return favicon, ico

@@ -1,6 +1,6 @@
 import json
 
-from muto.context import ContextManager
+from friday.context import ContextManager
 
 
 def test_context_compacts_old_reports_without_changing_files(tmp_path):

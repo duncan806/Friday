@@ -1,5 +1,10 @@
 __pycache__/
-stop.flag
+*.py[cod]
 *.egg-info/
 build/
 dist/
+.idea/
+.review-pytest/
+.pytest_cache/
+.muto/
+.friday/

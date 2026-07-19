@@ -1,8 +1,8 @@
-"""Build src/muto/data/vga_8x16.woff2 from src/muto/data/vga8x16.json.
+"""Build src/friday/data/vga_8x16.woff2 from src/friday/data/vga8x16.json.
 
 The JSON maps each of the 256 CP437 characters (as Unicode) to 16 row bytes
 (8 px wide, MSB = leftmost) of the classic IBM VGA 8x16 ROM font. Glyph data
-extracted from susam/pcface (MIT); see src/muto/data/LICENSE-pcface.md.
+extracted from susam/pcface (MIT); see src/friday/data/LICENSE-pcface.md.
 
 Every lit pixel becomes a 64-unit square (runs merged per row), so the
 rendered outline is pixel-identical to the bitmap at multiples of 16px.
@@ -17,7 +17,7 @@ from pathlib import Path
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-DATA = Path(__file__).resolve().parent.parent / "src" / "muto" / "data"
+DATA = Path(__file__).resolve().parent.parent / "src" / "friday" / "data"
 PX = 64          # font units per bitmap pixel
 EM = 16 * PX     # 1024
 ASCENT = 12 * PX  # baseline sits below row 11 (caps occupy rows 2..11)
@@ -77,9 +77,9 @@ def build() -> Path:
     fb.setupHorizontalHeader(ascent=ASCENT, descent=-DESCENT)
     fb.setupOS2(sTypoAscender=ASCENT, sTypoDescender=-DESCENT, sTypoLineGap=0,
                 usWinAscent=ASCENT, usWinDescent=DESCENT)
-    fb.setupNameTable({"familyName": "MutoVGA", "styleName": "Regular",
-                       "fullName": "MutoVGA 8x16",
-                       "psName": "MutoVGA-Regular",
+    fb.setupNameTable({"familyName": "FridayVGA", "styleName": "Regular",
+                       "fullName": "FridayVGA 8x16",
+                       "psName": "FridayVGA-Regular",
                        "licenseDescription":
                            "IBM VGA 8x16 ROM bitmap; glyph data via susam/pcface (MIT)."})
     fb.setupPost(isFixedPitch=1)

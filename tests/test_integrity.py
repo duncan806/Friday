@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from muto.integrity import (  # noqa: E402
+from friday.integrity import (  # noqa: E402
     IntegrityBreach,
     assert_claude_isolation,
     assert_codex_prompt_clean,
@@ -75,13 +75,13 @@ def test_prompt_clean_when_no_secret_files(tmp_path):
 
 
 def test_surface_cwd_ok(ws):
-    from muto.integrity import assert_surface_cwd
+    from friday.integrity import assert_surface_cwd
     got = assert_surface_cwd(ws)
     assert got == (ws.resolve() / "surface")
 
 
 def test_surface_cwd_breach_when_file(tmp_path):
-    from muto.integrity import assert_surface_cwd
+    from friday.integrity import assert_surface_cwd
     (tmp_path / "workspace").mkdir()
     (tmp_path / "workspace" / "surface").write_text("i am a file, not a dir")
     with pytest.raises(IntegrityBreach):
@@ -89,7 +89,7 @@ def test_surface_cwd_breach_when_file(tmp_path):
 
 
 def test_surface_cwd_breach_when_symlink(tmp_path):
-    from muto.integrity import assert_surface_cwd
+    from friday.integrity import assert_surface_cwd
     (tmp_path / "workspace").mkdir()
     (tmp_path / "elsewhere").mkdir()
     os.symlink(tmp_path / "elsewhere", tmp_path / "workspace" / "surface")
