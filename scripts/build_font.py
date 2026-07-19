@@ -1,8 +1,8 @@
-"""Build assets/vga_8x16.woff2 from assets/vga8x16.json.
+"""Build src/muto/data/vga_8x16.woff2 from src/muto/data/vga8x16.json.
 
 The JSON maps each of the 256 CP437 characters (as Unicode) to 16 row bytes
 (8 px wide, MSB = leftmost) of the classic IBM VGA 8x16 ROM font. Glyph data
-extracted from susam/pcface (MIT); see assets/LICENSE-pcface.md.
+extracted from susam/pcface (MIT); see src/muto/data/LICENSE-pcface.md.
 
 Every lit pixel becomes a 64-unit square (runs merged per row), so the
 rendered outline is pixel-identical to the bitmap at multiples of 16px.
@@ -17,7 +17,7 @@ from pathlib import Path
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-ROOT = Path(__file__).resolve().parent.parent
+DATA = Path(__file__).resolve().parent.parent / "src" / "muto" / "data"
 PX = 64          # font units per bitmap pixel
 EM = 16 * PX     # 1024
 ASCENT = 12 * PX  # baseline sits below row 11 (caps occupy rows 2..11)
@@ -31,7 +31,7 @@ ALIASES = {"—": "─"}
 
 
 def build() -> Path:
-    glyphs = json.loads((ROOT / "assets" / "vga8x16.json").read_text())
+    glyphs = json.loads((DATA / "vga8x16.json").read_text())
     for extra, source in ALIASES.items():
         glyphs[extra] = glyphs[source]
 
@@ -84,7 +84,7 @@ def build() -> Path:
                            "IBM VGA 8x16 ROM bitmap; glyph data via susam/pcface (MIT)."})
     fb.setupPost(isFixedPitch=1)
     fb.font.flavor = "woff2"
-    out = ROOT / "assets" / "vga_8x16.woff2"
+    out = DATA / "vga_8x16.woff2"
     fb.save(out)
     return out
 

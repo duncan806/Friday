@@ -4,8 +4,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from integrity import (  # noqa: E402
+from muto.integrity import (  # noqa: E402
     IntegrityBreach,
     assert_claude_isolation,
     assert_codex_prompt_clean,

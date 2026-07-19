@@ -1,25 +1,22 @@
 """muto smoke test—first task (§10), 3 rounds. (spec §12-⑥)
 
 Drives the whole loop (asserts -> filter -> report -> build -> dashboard)
-with scripted mock agents instead of the real CLIs. Runs in a sandbox so
-the repository stays clean.
+with scripted mock agents instead of the real CLIs. Runs in a sandbox
+workspace; prompts come from the packaged defaults, exactly as an installed
+`muto run` would resolve them.
 
 Script: R1 initial noise -> R2 in progress (blockage+deviation, one intent
 sentence attempts to leak) -> R3 awaiting verdict (no blockage+deviation)
 -> halt awaiting the human verdict.
 """
 
-import shutil
 import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
-
-from bandwidth_filter import apply_filter        # noqa: E402
-from dashboard_gen import generate as gen_dash   # noqa: E402
-from orchestrator import Orchestrator            # noqa: E402
+from muto.bandwidth_filter import apply_filter
+from muto.dashboard_gen import generate as gen_dash
+from muto.orchestrator import Orchestrator
 
 SCRIPT = [
     # (attempt response, build_ok)
@@ -59,11 +56,12 @@ class SmokeAgents:
 
 
 def run_smoke(sandbox: Path) -> "object":
-    for d in ["workspace/src", "workspace/surface", "reports/dropped",
+    for d in ["workspace/src", "workspace/surface", "task", "reports/dropped",
               "predictions", "verdicts", "dashboard"]:
         (sandbox / d).mkdir(parents=True)
-    shutil.copytree(ROOT / "prompts", sandbox / "prompts")
-    shutil.copytree(ROOT / "task", sandbox / "task")
+    (sandbox / "task" / "task.md").write_text(
+        "A CLI tool that takes a CSV file and answers natural-language questions.\n",
+        encoding="utf-8")
     (sandbox / "config.yaml").write_text("bandwidth_level: 1\nround_budget: 3\n")
 
     orch = Orchestrator(root=sandbox, agents=SmokeAgents(),

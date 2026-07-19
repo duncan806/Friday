@@ -20,21 +20,18 @@ NOT auto-abort—judging entrapment belongs to the human's stop button).
 Otherwise repeat until the round budget runs out.
 """
 
-import json
 import subprocess
-import sys
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
 
 import yaml
 
-from integrity import (
+from .integrity import (
     IntegrityBreach,
     assert_claude_isolation,
     assert_codex_prompt_clean,
 )
-
-ROOT = Path(__file__).resolve().parent
 
 QUADRANTS = {
     (True, False): "initial noise",
@@ -108,10 +105,10 @@ def parse_claude_attempt(output: str) -> dict:
 
 
 class Orchestrator:
-    def __init__(self, root: Path = ROOT, config: dict | None = None,
+    def __init__(self, root: Path, config: dict | None = None,
                  agents=None, filter_fn=None, dashboard_fn=None,
                  prompt_builder=None):
-        self.root = root
+        self.root = Path(root)
         self.config = config or yaml.safe_load((root / "config.yaml").read_text())
         self.agents = agents or CLIAgents(root, int(self.config.get("timeout_seconds", 1800)))
         # filter_fn(report_dict, level) -> (kept_dict, dropped_lines)
@@ -130,7 +127,14 @@ class Orchestrator:
             f.write(msg + "\n")
 
     def _load_prompt(self, name: str, **kw) -> str:
-        tpl = self._p("prompts", name).read_text(encoding="utf-8")
+        # A workspace-local prompts/ copy (written by `muto init`) wins so
+        # users can tune the templates; otherwise use the packaged default.
+        local = self._p("prompts", name)
+        if local.is_file():
+            tpl = local.read_text(encoding="utf-8")
+        else:
+            tpl = resources.files("muto").joinpath(
+                "data/prompts", name).read_text(encoding="utf-8")
         for k, v in kw.items():
             tpl = tpl.replace("{{" + k + "}}", str(v))
         return tpl
@@ -222,28 +226,3 @@ class Orchestrator:
         self.dashboard_fn(self.state, self.root)
         self._log(f"cycle end: {self.state.status}")
         return self.state
-
-
-def main() -> int:
-    task = ROOT / "task" / "task.md"
-    if not task.is_file():
-        print("task/task.md not found. Plant the task first.", file=sys.stderr)
-        return 1
-    try:
-        from bandwidth_filter import apply_filter
-    except ImportError:
-        apply_filter = None
-    try:
-        from dashboard_gen import generate as gen_dash
-    except ImportError:
-        gen_dash = None
-    orch = Orchestrator(filter_fn=apply_filter, dashboard_fn=gen_dash)
-    state = orch.run_cycle()
-    print(json.dumps({"status": state.status,
-                      "rounds": [r.quadrant for r in state.rounds]},
-                     ensure_ascii=False))
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

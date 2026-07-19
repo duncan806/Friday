@@ -14,14 +14,26 @@ this system measures "did we build the right thing" (validation).
   prompt (the two asserts in `integrity.py` are the entirety of system
   reliability).
 
+## Install
+
+```
+pip install .              # registers the `muto` command
+```
+
+Code lives in site-packages; cycle data lives wherever you run `muto init`.
+
 ## Running
 
 ```
-./setup.sh                 # check CLI installation and auth (muto.bat on Windows)
+mkdir my-cycle && cd my-cycle
+muto init                  # create the cycle workspace (workspace/, task/, reports/...)
 $EDITOR task/task.md       # write the task (read-only once the cycle starts)
-python3 orchestrator.py    # start the round loop
-open dashboard/index.html  # DOS-style dashboard
+muto                       # boot screen + POST checks + [START CYCLE]
 ```
+
+Other commands: `muto doctor` (POST checks in the terminal), `muto run`
+(start the cycle directly), `muto stop` (halt before the next round).
+On Windows, double-clicking `muto.bat` is equivalent to running `muto`.
 
 ## Scope
 

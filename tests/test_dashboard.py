@@ -1,11 +1,7 @@
 import re
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import dashboard_gen  # noqa: E402
-from dashboard_gen import CLAUDE_ROAM, CODEX_ROAM, generate  # noqa: E402
-from orchestrator import CycleState, RoundResult  # noqa: E402
+from muto import dashboard_gen  # noqa: E402
+from muto.dashboard_gen import CLAUDE_ROAM, CODEX_ROAM, generate  # noqa: E402
+from muto.orchestrator import CycleState, RoundResult  # noqa: E402
 
 
 def rr(n, blocked, deviation, quadrant, void=False):

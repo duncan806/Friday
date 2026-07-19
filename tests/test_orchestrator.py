@@ -1,8 +1,4 @@
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from orchestrator import Orchestrator, parse_claude_attempt  # noqa: E402
+from muto.orchestrator import Orchestrator, parse_claude_attempt  # noqa: E402
 
 
 class ScriptedAgents:

@@ -1,8 +1,4 @@
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from bandwidth_filter import apply_filter  # noqa: E402
+from muto.bandwidth_filter import apply_filter  # noqa: E402
 
 
 def test_intent_field_always_blocked():
