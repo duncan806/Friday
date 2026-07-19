@@ -16,6 +16,7 @@ in the current directory.
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -35,9 +36,12 @@ MARKER = "config.yaml"
 DEFAULT_CONFIG = """\
 # muto config—spec §2, §9
 bandwidth_level: 1        # bandwidth dial: 1 (action/where only) | 2 (expected allowed). Change per cycle only.
-round_budget: 10          # round budget. Cycle ends when exhausted.
+round_budget: 30          # overnight budget. Cycle ends when exhausted.
 auth_mode: subscription   # subscription | api_key (ANTHROPIC_API_KEY / OPENAI_API_KEY)
-timeout_seconds: 1800     # agent subprocess timeout
+timeout_seconds: 600      # cut stalled calls early; total cycle budget stays large
+context_budget_chars: 60000
+context_recent_reports: 6
+intent_providers: [codex, claude]  # ordered control-plane failover
 window: true              # open the dashboard as a standalone app window (Chrome/Edge --app); false = default browser tab
 """
 
@@ -45,13 +49,18 @@ WINDOW_SIZE = (1024, 768)
 
 WORKSPACE_DIRS = [
     "workspace/src", "workspace/surface", "task", "reports/dropped",
-    "predictions", "verdicts", "dashboard", "prompts",
+    "predictions", "verdicts", "dashboard", "prompts", "github",
 ]
 
 
 def find_root() -> Path | None:
     cwd = Path.cwd()
     return cwd if (cwd / MARKER).is_file() else None
+
+
+def default_workspace_root() -> Path:
+    """A deterministic location removes directory choice from normal startup."""
+    return Path.home() / "MUTO"
 
 
 def require_root() -> Path:
@@ -125,6 +134,21 @@ def launch_dashboard(root: Path, window: bool) -> str:
         if browser and open_app_window(browser, url):
             return "app"
         print("  (no Chrome/Edge found—opening in the default browser)")
+    webbrowser.open(url)
+    return "tab"
+
+
+def launch_control_ui(root: Path, window: bool, port: int = 8765) -> str:
+    """Launch the persistent local bridge that turns screen actions into files."""
+    subprocess.Popen([sys.executable, "-m", "muto", "--serve", "--port", str(port)],
+                     cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL,
+                     creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+                     start_new_session=(os.name != "nt"))
+    url = f"http://127.0.0.1:{port}/"
+    browser = find_browser() if window else None
+    if browser and open_app_window(browser, url):
+        return "app"
     webbrowser.open(url)
     return "tab"
 
@@ -237,15 +261,35 @@ def cmd_doctor() -> int:
 def cmd_home(window: bool | None = None) -> int:
     root = find_root()
     if root is None:
+        target = default_workspace_root()
+        target.mkdir(parents=True, exist_ok=True)
+        os.chdir(target)
         cmd_init()
         root = require_root()
+
+    from .tui import run as run_tui
+
+    def checks_for_tui(check_root, on_update=None):
+        def publish(checks):
+            write_status(root, "boot", checks=checks,
+                         task_present=(root / "task" / "task.md").is_file())
+            if on_update:
+                on_update(checks)
+        checks, ok = run_checks(check_root, on_update=publish)
+        write_status(root, "ready" if ok else "failed", checks=checks,
+                     task_present=(root / "task" / "task.md").is_file())
+        return checks, ok
+
+    write_status(root, "boot")
+    return run_tui(root, checks_for_tui,
+                   lambda: cmd_run(attach=False), cmd_stop)
 
     if window is None:
         window = bool(load_config(root).get("window", True))
 
     # Screen first: open the dashboard, then stream the checks into status.js.
     write_status(root, "boot")
-    launch_dashboard(root, window)
+    launch_control_ui(root, window)
 
     def stream(checks):
         write_status(root, "boot", checks=checks,
@@ -263,28 +307,90 @@ def cmd_home(window: bool | None = None) -> int:
     # The Enter gate needs an interactive console. When launched without one
     # (e.g. via the no-console `mutow` entry / a desktop shortcut), start the
     # cycle automatically—the app window is the only surface the user sees.
-    if sys.stdin is not None and sys.stdin.isatty():
-        try:
-            input("Press Enter to START CYCLE... ")
-        except (EOFError, KeyboardInterrupt):
-            print("\nCancelled.")
-            return 1
-    else:
-        print("No interactive console; starting cycle automatically.")
-    return cmd_run()
+    print("Use [START CYCLE] in the muto window; the terminal may be closed.")
+    return 0
 
 
-def cmd_run() -> int:
+def notify_os(title: str, message: str) -> None:
+    """Best-effort OS notification; its failure never stops the cycle."""
+    try:
+        if os.name == "nt":
+            safe_title = title.replace("'", "''")
+            safe_message = message.replace("'", "''")
+            script = ("Add-Type -AssemblyName System.Windows.Forms;"
+                      f"[System.Windows.Forms.MessageBox]::Show('{safe_message}','{safe_title}')|Out-Null")
+            subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden",
+                              "-Command", script], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["osascript", "-e",
+                              f'display notification "{message}" with title "{title}"'],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif shutil.which("notify-send"):
+            subprocess.Popen(["notify-send", title, message], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def _worker(root: Path) -> int:
+    from .bandwidth_filter import apply_filter
+    pid_path = root / "muto.pid"
+    pid_path.write_text(str(os.getpid()), encoding="ascii")
+    try:
+        orch = Orchestrator(root=root, filter_fn=apply_filter,
+                            dashboard_fn=generate, notify_fn=notify_os)
+        state = orch.run_cycle()
+        print(f"cycle finished: {state.status}", flush=True)
+        return 0
+    except Exception as exc:
+        write_status(root, "cycle", status="crashed", message=str(exc))
+        notify_os("MUTO cycle crashed", str(exc))
+        with open(root / "reports" / "orchestrator.log", "a", encoding="utf-8") as log:
+            log.write(f"cycle crash: {type(exc).__name__}: {exc}\n")
+        return 1
+    finally:
+        pid_path.unlink(missing_ok=True)
+
+
+def cmd_run(attach: bool = False) -> int:
     root = require_root()
     if not (root / "task" / "task.md").is_file():
         print("task/task.md missing. Plant the task first.", file=sys.stderr)
         return 1
-    from .bandwidth_filter import apply_filter
-    orch = Orchestrator(root=root, filter_fn=apply_filter, dashboard_fn=generate)
-    state = orch.run_cycle()
-    print(f"cycle finished: {state.status}")
-    for r in state.rounds:
-        print(f"  R{r.round}: {r.quadrant}")
+    if attach:
+        return _worker(root)
+    log_path = root / "reports" / "worker.log"
+    log = open(log_path, "a", encoding="utf-8")
+    kwargs = {"cwd": root, "stdin": subprocess.DEVNULL, "stdout": log,
+              "stderr": subprocess.STDOUT}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen([sys.executable, "-m", "muto", "run", "--attach"], **kwargs)
+    log.close()
+    try:
+        previous = json.loads((root / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = {}
+    write_status(root, "cycle", status="starting", message=f"worker pid {proc.pid}",
+                 round_no=int(previous.get("round", 0)), rounds=previous.get("rounds", []),
+                 task_present=True)
+    print(f"muto running in background (pid {proc.pid})")
+    return 0
+
+
+def cmd_status() -> int:
+    root = require_root()
+    try:
+        state = json.loads((root / "status.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print("unknown | no status.json")
+        return 1
+    summary = (f"{state.get('status') or state.get('phase', 'unknown')} | "
+               f"round {state.get('round', 0)} | {state.get('message', '')}")
+    print(summary.rstrip(" |"))
     return 0
 
 
@@ -378,25 +484,25 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="muto",
         description="Validation through enforced information asymmetry.")
+    parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--port", type=int, default=8765, help=argparse.SUPPRESS)
     win = parser.add_mutually_exclusive_group()
     win.add_argument("--window", dest="window", action="store_true", default=None,
                      help="open the dashboard as a standalone app window (default)")
     win.add_argument("--no-window", dest="window", action="store_false",
                      help="open the dashboard in the default browser tab")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("init", help="create a cycle workspace in the current directory")
-    sub.add_parser("doctor", help="run POST checks (claude/codex/auth) in the terminal")
-    sub.add_parser("run", help="start the cycle")
-    sub.add_parser("stop", help="signal the running cycle to halt")
-    sub.add_parser("shortcut", help="create a desktop shortcut for this workspace")
+    run_parser = sub.add_parser("run", help="start the cycle in background")
+    run_parser.add_argument("--attach", action="store_true", help="run in foreground")
+    sub.add_parser("status", help="print one-line file status")
     args = parser.parse_args(argv)
 
+    if args.serve:
+        from .control_server import serve
+        serve(require_root(), args.port)
+        return 0
     if args.command is None:
         return cmd_home(window=args.window)
-    return {
-        "init": cmd_init,
-        "doctor": cmd_doctor,
-        "run": cmd_run,
-        "stop": cmd_stop,
-        "shortcut": cmd_shortcut,
-    }[args.command]()
+    if args.command == "run":
+        return cmd_run(attach=args.attach)
+    return cmd_status()

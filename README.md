@@ -24,16 +24,17 @@ Code lives in site-packages; cycle data lives wherever you run `muto init`.
 
 ## Running
 
-```
-mkdir my-cycle && cd my-cycle
-muto init                  # create the cycle workspace (workspace/, task/, reports/...)
-$EDITOR task/task.md       # write the task (read-only once the cycle starts)
-muto                       # boot screen + POST checks + [START CYCLE]
-```
+Run `muto`. It opens a CRT-inspired ASCII interface and creates a deterministic
+workspace when needed. There are no commands to memorize: describe the desired
+outcome naturally and muto plants the task and starts the unattended cycle.
+Natural-language requests can also add data, inspect or stop a cycle, connect
+GitHub/Claude/Codex, and create pull requests. Codex handles control-plane
+intent routing with Claude Code as an isolated fallback.
 
-Other commands: `muto doctor` (POST checks in the terminal), `muto run`
-(start the cycle directly), `muto stop` (halt before the next round).
-On Windows, double-clicking `muto.bat` is equivalent to running `muto`.
+Automation-compatible exceptions are `muto run` (detached by default),
+`muto run --attach` (foreground), and `muto status` (one-line summary from
+`status.json`). A stopped or crashed cycle resumes after its last completed
+round when `muto run` is issued again.
 
 `muto init` turns `workspace/` into a git repo (git must be installed).
 Codex requires a repo to run, and the round loop commits `workspace/` after

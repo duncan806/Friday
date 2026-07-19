@@ -20,6 +20,7 @@ NOT auto-abort—judging entrapment belongs to the human's stop button).
 Otherwise repeat until the round budget runs out.
 """
 
+import json
 import subprocess
 from dataclasses import dataclass, field
 from importlib import resources
@@ -28,6 +29,7 @@ from pathlib import Path
 import yaml
 
 from .gitutil import commit_round
+from .context import ContextManager
 from .integrity import (
     IntegrityBreach,
     assert_claude_isolation,
@@ -57,7 +59,19 @@ class RoundResult:
 @dataclass
 class CycleState:
     rounds: list = field(default_factory=list)
-    status: str = "running"     # running | awaiting_verdict | budget_exhausted | aborted
+    status: str = "running"
+    context: dict = field(default_factory=dict)
+
+
+APPROVAL_MARKERS = (
+    "approval required", "waiting for approval", "permission required",
+    "approve this", "do you want to allow", "requires approval",
+)
+
+
+def _approval_requested(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in APPROVAL_MARKERS)
 
 
 class CLIAgents:
@@ -82,18 +96,30 @@ class CLIAgents:
         # tools. Bash stays powerful, so assert_claude_isolation is re-run
         # after the turn as post-hoc verification that surface/ stayed the
         # boundary (raw `cat ../src` reads remain a documented residual, U4).
-        r = subprocess.run(
+        try:
+            r = subprocess.run(
             ["claude", "-p", prompt,
              "--allowedTools", "Bash",
              "--disallowedTools", "Edit,Write,Read,Glob,Grep"],
             cwd=surface, capture_output=True, text=True, timeout=self.timeout)
+        except subprocess.TimeoutExpired:
+            return "agent call timed out; no user input was requested"
+        output = (r.stdout or "") + (r.stderr or "")
+        if _approval_requested(output):
+            raise IntegrityBreach("Claude entered an approval-wait state")
         return r.stdout
 
     def codex(self, prompt: str) -> tuple[str, bool]:
-        r = subprocess.run(
+        try:
+            r = subprocess.run(
             ["codex", "exec", "--sandbox", "workspace-write",
              "--cd", "workspace", prompt],
             cwd=self.root, capture_output=True, text=True, timeout=self.timeout)
+        except subprocess.TimeoutExpired:
+            return "agent call timed out", False
+        output = (r.stdout or "") + (r.stderr or "")
+        if _approval_requested(output):
+            raise IntegrityBreach("Codex entered an approval-wait state")
         return r.stdout, r.returncode == 0
 
 
@@ -122,7 +148,7 @@ def parse_claude_attempt(output: str) -> dict:
 class Orchestrator:
     def __init__(self, root: Path, config: dict | None = None,
                  agents=None, filter_fn=None, dashboard_fn=None,
-                 prompt_builder=None):
+                 prompt_builder=None, notify_fn=None):
         self.root = Path(root)
         self.config = config or yaml.safe_load((root / "config.yaml").read_text())
         self.agents = agents or CLIAgents(root, int(self.config.get("timeout_seconds", 1800)))
@@ -130,8 +156,36 @@ class Orchestrator:
         self.filter_fn = filter_fn or (lambda rep, level: (rep, []))
         self.dashboard_fn = dashboard_fn or (lambda state, root: None)
         self.prompt_builder = prompt_builder
+        self.notify_fn = notify_fn or (lambda title, message: None)
+        self.context_manager = ContextManager(
+            root,
+            int(self.config.get("context_budget_chars", 60000)),
+            int(self.config.get("context_recent_reports", 6)),
+        )
         self.state = CycleState()
         self.log_path = root / "reports" / "orchestrator.log"
+
+    def _restore_state(self) -> int:
+        """Restore completed rounds from status.json; reports remain canonical."""
+        path = self.root / "status.json"
+        if not path.is_file():
+            return 1
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            restored = []
+            for item in raw.get("rounds", []):
+                n = int(item["round"])
+                if not self._p("reports", f"round_{n:03d}.md").is_file() and not item.get("void"):
+                    break
+                restored.append(RoundResult(**{
+                    k: item[k] for k in RoundResult.__dataclass_fields__ if k in item
+                }))
+            prior_status = str(raw.get("status", "running"))
+            self.state = CycleState(rounds=restored, status=prior_status)
+            return (restored[-1].round + 1) if restored else 1
+        except (OSError, ValueError, TypeError, KeyError):
+            self._log("status.json unreadable; resuming from round 1")
+            return 1
 
     # ── path helpers ──
     def _p(self, *parts) -> Path:
@@ -213,9 +267,9 @@ class Orchestrator:
                         "\n".join(dropped) + "\n", encoding="utf-8")
 
             # d. Codex build (all of reports/ is the only input)
-            reports_text = "\n\n".join(
-                p.read_text(encoding="utf-8")
-                for p in sorted(self._p("reports").glob("round_*.md")))
+            reports_text, context_state = self.context_manager.build(
+                list(self._p("reports").glob("round_*.md")))
+            self.state.context = context_state
             codex_prompt = self._load_prompt("codex_builder.md",
                                              reports=reports_text, round=n)
             assert_codex_prompt_clean(codex_prompt, self._p("task", "task.md"),
@@ -246,6 +300,7 @@ class Orchestrator:
         # e. regenerate the dashboard
         self.dashboard_fn(self.state, self.root)
         self._log(f"round={n} quadrant={result.quadrant} void={result.void}")
+        self.notify_fn("MUTO round complete", f"Round {n}: {result.quadrant}")
         return result
 
     # ── cycle ──
@@ -253,15 +308,24 @@ class Orchestrator:
         # File-based stop signal: the dashboard's [STOP] button drops
         # stop.flag into the root; the loop checks it before every round.
         stop_flag = self.root / "stop.flag"
-        stop_flag.unlink(missing_ok=True)  # clear a stale flag from a previous run
+        stop_flag.unlink(missing_ok=True)  # a new run explicitly resumes an old stop
+        start_round = self._restore_state()
+        if self.state.status in ("awaiting_verdict", "budget_exhausted"):
+            self.dashboard_fn(self.state, self.root)
+            return self.state
+        self.state.status = "running"
         self.dashboard_fn(self.state, self.root)  # initial render for the launcher
-        budget = int(self.config.get("round_budget", 10))
-        for n in range(1, budget + 1):
+        budget = int(self.config.get("round_budget", 30))
+        for n in range(start_round, budget + 1):
             if stop_flag.exists():
                 self.state.status = "aborted"
                 self._log(f"stop.flag detected before round {n}: aborted")
                 break
             result = self.run_round(n)
+            if result.void:
+                self.state.status = "integrity_breach"
+                self._log(f"cycle halted after INTEGRITY_BREACH in round {n}")
+                break
             if not result.void and result.quadrant == "awaiting verdict":
                 self.state.status = "awaiting_verdict"
                 break
@@ -269,4 +333,6 @@ class Orchestrator:
             self.state.status = "budget_exhausted"
         self.dashboard_fn(self.state, self.root)
         self._log(f"cycle end: {self.state.status}")
+        title = "MUTO awaiting verdict" if self.state.status == "awaiting_verdict" else "MUTO cycle ended"
+        self.notify_fn(title, self.state.status.replace("_", " "))
         return self.state

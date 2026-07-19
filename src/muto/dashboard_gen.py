@@ -20,7 +20,9 @@ status == "verdict_passed") do they meet once at the center.
 """
 
 import base64
+import html as html_lib
 import json
+from dataclasses import asdict
 from importlib import resources
 from pathlib import Path
 
@@ -132,10 +134,19 @@ def _quadrant_rows(rounds) -> str:
 
 
 def write_status(root: Path, phase: str, *, checks=None, round_no: int = 0,
-                 status: str = "", task_present: bool = False) -> Path:
+                 status: str = "", task_present: bool = False, rounds=None,
+                 message: str = "", context=None) -> Path:
     """Write dashboard/status.js—the file the page polls."""
     payload = {"phase": phase, "checks": checks or [], "round": round_no,
-               "status": status, "task_present": task_present}
+               "status": status, "task_present": task_present,
+               "rounds": rounds or [], "message": message,
+               "context": context or {}}
+    canonical = root / "status.json"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    tmp = canonical.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                   encoding="utf-8")
+    tmp.replace(canonical)
     out = root / "dashboard" / "status.js"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("window.MUTO_STATUS = " + json.dumps(payload) + ";\n",
@@ -147,6 +158,11 @@ def generate(state, root: Path) -> Path:
     rounds = state.rounds
     toxic = bool(rounds) and rounds[-1].quadrant == "toxic convergence—alert"
     passed = state.status == "verdict_passed"
+    predictions = sorted((root / "predictions").glob("round_*.md"))
+    prediction_text = predictions[-1].read_text(encoding="utf-8") if predictions else "(none)"
+    surface = root / "workspace" / "surface"
+    artifact_text = ("\n".join(str(p.relative_to(surface)) for p in surface.rglob("*")
+                               if p.is_file()) if surface.is_dir() else "(none)")
     alert = ('<div class="alert blink">⚠ TOXIC CONVERGENCE—ALERT ⚠</div>' if toxic else "")
 
     if passed:
@@ -164,6 +180,8 @@ def generate(state, root: Path) -> Path:
         "@@CURVE_PANEL@@": _panel("CONVERGENCE CURVE", _ascii_curve(rounds)),
         "@@QUADRANT_PANEL@@": _panel("QUADRANTS", _quadrant_rows(rounds)),
         "@@STATUS@@": state.status,
+        "@@PREDICTION@@": html_lib.escape(prediction_text),
+        "@@ARTIFACT@@": html_lib.escape(artifact_text or "(empty)"),
         "@@BAKED_ROUND@@": str(len(rounds)),
         "@@SPRITE_PX@@": str(SPRITE_PX),
         "@@CODEX_MIN@@": str(CODEX_ROAM[0]),
@@ -181,5 +199,6 @@ def generate(state, root: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
     write_status(root, "cycle", round_no=len(rounds), status=state.status,
-                 task_present=True)
+                 task_present=True, rounds=[asdict(r) for r in rounds],
+                 context=getattr(state, "context", {}))
     return out
