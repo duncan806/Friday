@@ -1,10 +1,12 @@
-"""muto 스모크 테스트 — 최초 과제(§10) 3라운드. (스펙 §12-⑥)
+"""muto smoke test—first task (§10), 3 rounds. (spec §12-⑥)
 
-실제 CLI 대신 각본 목 에이전트로 루프 전체(assert → 필터 → 보고 →
-빌드 → 대시보드)를 관통한다. 리포지토리를 더럽히지 않도록 샌드박스에서 실행.
+Drives the whole loop (asserts -> filter -> report -> build -> dashboard)
+with scripted mock agents instead of the real CLIs. Runs in a sandbox so
+the repository stays clean.
 
-각본: R1 초기 노이즈 → R2 진행 중(막힘+편차, 의도 문장 1개 누출 시도)
-→ R3 판정 대기(막힘 없음+편차 있음) → 인간 판정 대기 정지.
+Script: R1 initial noise -> R2 in progress (blockage+deviation, one intent
+sentence attempts to leak) -> R3 awaiting verdict (no blockage+deviation)
+-> halt awaiting the human verdict.
 """
 
 import shutil
@@ -20,7 +22,7 @@ from dashboard_gen import generate as gen_dash   # noqa: E402
 from orchestrator import Orchestrator            # noqa: E402
 
 SCRIPT = [
-    # (attempt 응답, build_ok)
+    # (attempt response, build_ok)
     ("""```yaml
 report:
   action_taken: surface의 사용법대로 python csvq.py sales.csv 를 실행했다.

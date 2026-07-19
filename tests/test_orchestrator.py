@@ -6,7 +6,7 @@ from orchestrator import Orchestrator, parse_claude_attempt  # noqa: E402
 
 
 class ScriptedAgents:
-    """라운드별 각본대로 응답하는 목 에이전트. script: [(막힘텍스트, deviation, build_ok)]"""
+    """Mock agents that answer from a per-round script: [(stuck_text, deviation, build_ok)]"""
 
     def __init__(self, script):
         self.script = script
@@ -43,9 +43,9 @@ def run(tmp_path, script):
 
 def test_awaiting_verdict_stops_cycle(tmp_path):
     root, state = run(tmp_path, [
-        ("import 에러로 실행 불가", False, True),   # 초기 노이즈
-        ("질문에 오답을 냈다", True, True),          # 진행 중
-        ("", True, True),                            # 판정 대기 → 정지
+        ("import 에러로 실행 불가", False, True),   # initial noise
+        ("질문에 오답을 냈다", True, True),          # in progress
+        ("", True, True),                            # awaiting verdict -> halt
         ("도달하면 안 됨", False, True),
     ])
     assert state.status == "awaiting_verdict"
@@ -62,7 +62,7 @@ def test_toxic_convergence_does_not_stop(tmp_path):
 
 def test_build_failure_is_blockage(tmp_path):
     root, state = run(tmp_path, [("", True, False)] * 5)
-    assert state.status == "budget_exhausted"           # 막힘 있음이므로 판정 대기 아님
+    assert state.status == "budget_exhausted"           # blocked, so never awaiting verdict
     assert state.rounds[0].blocked and state.rounds[0].build_failed
     assert "제품 출시 불가" in (root / "reports" / "round_001.md").read_text()
 

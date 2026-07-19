@@ -1,25 +1,25 @@
-"""muto 대역폭 필터 v0 — 정규식 기반. (스펙 §5)
+"""muto bandwidth filter v0—regex based. (spec §5)
 
-채널 스키마:
-  action_taken  항상 허용
-  where_stuck   항상 허용
-  expected      LEVEL 2 에서만 허용
-  intent        항상 차단
+Channel schema:
+  action_taken  always allowed
+  where_stuck   always allowed
+  expected      allowed only at LEVEL 2
+  intent        always blocked
 
-허용 필드 안에서도 목적/의도 서술로 판정된 문장은 드롭한다.
-드롭 문장은 호출자가 reports/dropped/ 에 원문 보존한다.
+Even inside allowed fields, sentences judged to describe purpose/intent are
+dropped. The caller preserves dropped sentences verbatim in reports/dropped/.
 
-알려진 한계(공개, U1): 의도 누출을 완전히 막을 수 없다.
-이는 은폐하지 않고 dropped 로그의 감사 가능성으로 상쇄한다.
+Known limitation (public, U1): intent leakage cannot be fully prevented.
+This is not hidden; it is offset by the auditability of the dropped log.
 """
 
 import re
 
 ALLOWED_ALWAYS = ("action_taken", "where_stuck")
 ALLOWED_LEVEL2 = ("expected",)
-PASSTHROUGH = ("deviation", "round")  # 채널 내용이 아닌 메타데이터
+PASSTHROUGH = ("deviation", "round")  # metadata, not channel content
 
-# 목적/의도 서술 패턴 (한국어 + 영어)
+# Purpose/intent phrasing patterns (Korean + English)
 INTENT_PATTERNS = [
     r"위해", r"위한", r"하려고", r"하고\s*싶", r"싶어서", r"원해서", r"목적", r"의도",
     r"필요해서", r"쓰려고", r"려는\s*것", r"하기\s*위함",
@@ -36,7 +36,7 @@ def _split_sentences(text: str) -> list[str]:
 
 
 def apply_filter(report: dict, level: int) -> tuple[dict, list[str]]:
-    """(통과한 보고 dict, 드롭된 문장 리스트) 반환."""
+    """Return (passed report dict, list of dropped sentences)."""
     allowed = set(ALLOWED_ALWAYS)
     if level >= 2:
         allowed |= set(ALLOWED_LEVEL2)
@@ -50,7 +50,8 @@ def apply_filter(report: dict, level: int) -> tuple[dict, list[str]]:
             continue
         text = str(value) if value is not None else ""
         if key not in allowed:
-            # intent 필드 및 미허용 필드(LEVEL 1의 expected 포함) 통째로 차단
+            # Block the intent field and any disallowed field wholesale
+            # (including expected at LEVEL 1)
             if text.strip():
                 dropped.append(f"[{key}] {text.strip()}")
             continue

@@ -1,5 +1,5 @@
-# muto config — 스펙 §2, §9
-bandwidth_level: 1        # 대역폭 다이얼: 1(action/where만) | 2(expected 허용). 사이클 단위로만 변경.
-round_budget: 10          # 라운드 예산. 소진 시 사이클 종료.
+# muto config—spec §2, §9
+bandwidth_level: 1        # bandwidth dial: 1 (action/where only) | 2 (expected allowed). Change per cycle only.
+round_budget: 10          # round budget. Cycle ends when exhausted.
 auth_mode: subscription   # subscription | api_key (ANTHROPIC_API_KEY / OPENAI_API_KEY)
-timeout_seconds: 1800     # 에이전트 서브프로세스 타임아웃
+timeout_seconds: 1800     # agent subprocess timeout

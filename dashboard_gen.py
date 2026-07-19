@@ -1,18 +1,20 @@
-"""muto 대시보드 생성기 — 도스 스타일 정적 HTML 단일 파일. (스펙 §8)
+"""muto dashboard generator—DOS-style static single-file HTML. (spec §8)
 
-서버 없음. JS는 애니메이션에만. 그라데이션·라운드 코너·그림자 전면 금지.
+No server. JS for animation only. Gradients, rounded corners, and shadows
+are banned outright.
 
-마스코트 불변량: Codex 스프라이트와 Claude 스프라이트는 서로 다른 영역을
-배회하며 절대 만나지 않는다 — 정보 비대칭의 시각화다.
-사이클 완주(판정 통과, status == "verdict_passed") 시에만 중앙 조우 1회.
+Mascot invariant: the Codex sprite and the Claude sprite roam disjoint
+regions and never meet—a visualization of information asymmetry.
+Only on cycle completion (verdict passed, status == "verdict_passed") do
+they meet once at the center.
 """
 
 from pathlib import Path
 
-# 배회 영역 (화면 폭 %). 두 구간은 절대 겹치지 않는다 — 불변량.
-CODEX_ROAM = (2, 42)    # 좌측: src 패널 쪽
-CLAUDE_ROAM = (58, 96)  # 우측: surface 패널 쪽
-assert CODEX_ROAM[1] < CLAUDE_ROAM[0], "마스코트 배회 영역이 겹친다"
+# Roaming regions (% of screen width). The two ranges never overlap—invariant.
+CODEX_ROAM = (2, 42)    # left: src panel side
+CLAUDE_ROAM = (58, 96)  # right: surface panel side
+assert CODEX_ROAM[1] < CLAUDE_ROAM[0], "mascot roaming regions overlap"
 
 _BLOCK = {True: "█", False: "░"}
 
@@ -58,12 +60,12 @@ def generate(state, root: Path) -> Path:
              image-rendering: pixelated; }}
   .codex  {{ background:#FFFF55; box-shadow: 4px -16px 0 #FFFF55; }}
   .claude {{ background:#AAAAAA; box-shadow: -4px -16px 0 #AAAAAA; }}
-  /* 배회 영역 — 절대 겹치지 않는다 (정보 비대칭의 시각화) */
+  /* roaming regions—never overlap (visualization of information asymmetry) */
   .roam-codex  {{ animation: roamc 9s linear infinite alternate; }}
   .roam-claude {{ animation: roama 11s linear infinite alternate; }}
   @keyframes roamc {{ from {{ left:{CODEX_ROAM[0]}%; }} to {{ left:{CODEX_ROAM[1]}%; }} }}
   @keyframes roama {{ from {{ left:{CLAUDE_ROAM[0]}%; }} to {{ left:{CLAUDE_ROAM[1]}%; }} }}
-  /* 판정 통과 시에만: 1회성 중앙 조우 */
+  /* only when the verdict passes: a one-time meeting at the center */
   .meet  {{ left:{CODEX_ROAM[0]}%; animation: meetc 4s linear forwards; }}
   .meet2 {{ left:{CLAUDE_ROAM[1]}%; animation: meeta 4s linear forwards; }}
   @keyframes meetc {{ to {{ left:47%; }} }}
@@ -71,7 +73,7 @@ def generate(state, root: Path) -> Path:
 </style></head><body>
 <pre class="title">
 ╔══════════════════════════════════════════════╗
-║  muto — validation dashboard                 ║
+║  muto—validation dashboard                   ║
 ╚══════════════════════════════════════════════╝
 </pre>
 {alert}

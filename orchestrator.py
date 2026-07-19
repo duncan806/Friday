@@ -1,20 +1,23 @@
-"""muto orchestrator — 얇은 라우터. 판단하지 않는다. (스펙 §2, §4)
+"""muto orchestrator—a thin router. It does not judge. (spec §2, §4)
 
-세션 상태 관리, CLI 호출, 대역폭 필터 적용, 대시보드 생성만 한다.
-LLM API를 직접 호출해 내용을 판단하는 코드는 금지 —
-판단이 필요해 보이는 지점은 인간 판정 항목이거나 설계 오류다.
+It only manages session state, invokes the CLIs, applies the bandwidth
+filter, and generates the dashboard. Code that calls an LLM API directly to
+judge content is forbidden—any point that seems to require judgment is
+either a human-verdict item or a design error.
 
-라운드 루프 (스펙 §4):
-  a. Claude 사전등록 예측 → predictions/round_N.md (Codex 비공개)
-  b. Claude surface에서 과제 수행 시도 → 막힘 보고
-  c. 대역폭 필터 → reports/round_N.md (드롭 문장은 dropped/ 보존)
-  d. Codex reports/ 전체 입력으로 src 수정, surface 재빌드
-     (빌드 실패 = 최강도 막힘 보고 "제품 출시 불가" 자동 변환)
-  e. 대시보드 재생성
+Round loop (spec §4):
+  a. Claude pre-registered prediction -> predictions/round_N.md (hidden from Codex)
+  b. Claude attempts the task on surface -> blockage report
+  c. bandwidth filter -> reports/round_N.md (dropped sentences preserved in dropped/)
+  d. Codex takes all of reports/ as input, edits src, rebuilds surface
+     (build failure auto-converts to the maximum-severity blockage
+     "product cannot ship")
+  e. regenerate the dashboard
 
-종료 (스펙 §6): 막힘 없음 ∧ 편차 있음 → 인간 판정 대기 정지.
-막힘 없음 ∧ 편차 없음 → 토스틱 수렴 경보(자동 중단하지 않는다 —
-갇힘 판단은 인간의 중단 버튼 몫이다). 그 외 라운드 예산까지 반복.
+Termination (spec §6): no blockage AND deviation present -> halt, awaiting
+human verdict. No blockage AND no deviation -> toxic-convergence alert (do
+NOT auto-abort—judging entrapment belongs to the human's stop button).
+Otherwise repeat until the round budget runs out.
 """
 
 import json
@@ -47,7 +50,7 @@ class RoundResult:
     blocked: bool
     deviation: bool
     quadrant: str
-    void: bool = False          # INTEGRITY_BREACH 시 무효
+    void: bool = False          # voided on INTEGRITY_BREACH
     build_failed: bool = False
     dropped_count: int = 0
 
@@ -59,7 +62,7 @@ class CycleState:
 
 
 class CLIAgents:
-    """스펙 §3의 비대화형 서브프로세스 호출."""
+    """Non-interactive subprocess invocations per spec §3."""
 
     def __init__(self, root: Path, timeout: int):
         self.root = root
@@ -83,11 +86,11 @@ class CLIAgents:
 
 
 def parse_claude_attempt(output: str) -> dict:
-    """Claude 사용자 턴 출력에서 보고 블록을 파싱한다.
+    """Parse the report block out of Claude's user-turn output.
 
-    기대 형식: ```yaml ... ``` 펜스 안의 report 스키마(스펙 §5) +
-    deviation: true/false. 파싱 실패 시 전문을 where_stuck으로 취급
-    (판단하지 않는다 — 형식 불량도 하나의 막힘이다).
+    Expected form: the report schema (spec §5) inside a ```yaml ... ``` fence,
+    plus deviation: true/false. On parse failure, treat the full text as
+    where_stuck (we do not judge—malformed output is itself a blockage).
     """
     text = output
     if "```yaml" in output:
@@ -118,7 +121,7 @@ class Orchestrator:
         self.state = CycleState()
         self.log_path = root / "reports" / "orchestrator.log"
 
-    # ── 경로 헬퍼 ──
+    # ── path helpers ──
     def _p(self, *parts) -> Path:
         return self.root.joinpath(*parts)
 
@@ -132,14 +135,14 @@ class Orchestrator:
             tpl = tpl.replace("{{" + k + "}}", str(v))
         return tpl
 
-    # ── 라운드 ──
+    # ── round ──
     def run_round(self, n: int) -> RoundResult:
         task_text = self._p("task", "task.md").read_text(encoding="utf-8")
         workspace = self._p("workspace")
         level = int(self.config.get("bandwidth_level", 1))
 
         try:
-            # a. 사전등록 예측 (Claude만, Codex 비공개)
+            # a. pre-registered prediction (Claude only, hidden from Codex)
             assert_claude_isolation(workspace)
             pred_prompt = self._load_prompt("claude_user.md", task=task_text,
                                             round=n, mode="predict")
@@ -147,14 +150,14 @@ class Orchestrator:
             self._p("predictions", f"round_{n:03d}.md").write_text(
                 prediction, encoding="utf-8")
 
-            # b. 과제 수행 시도 → 막힘 보고
+            # b. task attempt -> blockage report
             assert_claude_isolation(workspace)
             attempt_prompt = self._load_prompt("claude_user.md", task=task_text,
                                                round=n, mode="attempt")
             raw = self.agents.claude(attempt_prompt)
             report = parse_claude_attempt(raw)
 
-            # c. 대역폭 필터
+            # c. bandwidth filter
             kept, dropped = self.filter_fn(report, level)
             self._p("reports", f"round_{n:03d}.md").write_text(
                 yaml.safe_dump({"report": {**kept, "round": n}},
@@ -164,7 +167,7 @@ class Orchestrator:
                 self._p("reports", "dropped", f"round_{n:03d}.md").write_text(
                     "\n".join(dropped) + "\n", encoding="utf-8")
 
-            # d. Codex 빌드 (reports/ 전체가 유일한 입력)
+            # d. Codex build (all of reports/ is the only input)
             reports_text = "\n\n".join(
                 p.read_text(encoding="utf-8")
                 for p in sorted(self._p("reports").glob("round_*.md")))
@@ -174,7 +177,7 @@ class Orchestrator:
                                       self._p("predictions"))
             _, build_ok = self.agents.codex(codex_prompt)
             if not build_ok:
-                # 빌드 실패 = 최강도 막힘 보고로 자동 변환
+                # build failure auto-converts to the maximum-severity blockage
                 path = self._p("reports", f"round_{n:03d}.md")
                 path.write_text(path.read_text(encoding="utf-8") +
                                 "\nbuild_failure: 제품 출시 불가\n", encoding="utf-8")
@@ -192,12 +195,12 @@ class Orchestrator:
                                  quadrant="무효", void=True)
 
         self.state.rounds.append(result)
-        # e. 대시보드 재생성
+        # e. regenerate the dashboard
         self.dashboard_fn(self.state, self.root)
         self._log(f"round={n} quadrant={result.quadrant} void={result.void}")
         return result
 
-    # ── 사이클 ──
+    # ── cycle ──
     def run_cycle(self) -> CycleState:
         budget = int(self.config.get("round_budget", 10))
         for n in range(1, budget + 1):
@@ -215,7 +218,7 @@ class Orchestrator:
 def main() -> int:
     task = ROOT / "task" / "task.md"
     if not task.is_file():
-        print("task/task.md 가 없다. 과제를 먼저 심어라.", file=sys.stderr)
+        print("task/task.md not found. Plant the task first.", file=sys.stderr)
         return 1
     try:
         from bandwidth_filter import apply_filter

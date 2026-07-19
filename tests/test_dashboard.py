@@ -14,7 +14,7 @@ def rr(n, blocked, deviation, quadrant, void=False):
 
 
 def test_roam_regions_never_overlap():
-    """불변량: 두 마스코트는 절대 만나지 않는다."""
+    """Invariant: the two mascots never meet."""
     assert CODEX_ROAM[1] < CLAUDE_ROAM[0]
 
 
