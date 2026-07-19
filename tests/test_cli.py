@@ -1,7 +1,7 @@
 import os
 
 from muto import cli
-from muto.cli import cmd_init, cmd_stop
+from muto.cli import cmd_init, cmd_shortcut, cmd_stop
 
 
 def in_dir(tmp_path, fn):
@@ -89,3 +89,76 @@ def test_codex_auth_probe_skips_git_repo_check(monkeypatch):
     monkeypatch.setattr(cli, "_auth_probe", fake_probe)
     cli.run_checks(None)
     assert "--skip-git-repo-check" in seen["cmd"]
+
+
+def test_window_config_default_and_flag(tmp_path):
+    in_dir(tmp_path, cmd_init)
+    assert cli.load_config(tmp_path).get("window") is True  # DEFAULT_CONFIG
+
+
+def test_favicon_and_title_in_dashboard(tmp_path):
+    from muto.dashboard_gen import generate
+    from muto.orchestrator import CycleState
+    html = generate(CycleState(), tmp_path).read_text()
+    assert "<title>MUTO</title>" in html
+    assert 'rel="icon"' in html and "data:image/png;base64," in html
+
+
+def test_launch_dashboard_falls_back_to_tab(tmp_path, monkeypatch):
+    in_dir(tmp_path, cmd_init)
+    monkeypatch.setattr(cli, "find_browser", lambda: None)
+    opened = {}
+    monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.setdefault("url", url))
+    mode = cli.launch_dashboard(tmp_path, window=True)
+    assert mode == "tab" and opened["url"].startswith("file://")
+
+
+def test_launch_dashboard_app_window(tmp_path, monkeypatch):
+    in_dir(tmp_path, cmd_init)
+    calls = {}
+    monkeypatch.setattr(cli, "find_browser", lambda: cli.Path("/usr/bin/chrome"))
+    def fake_open(browser, url, size=cli.WINDOW_SIZE):
+        calls["browser"], calls["url"], calls["size"] = browser, url, size
+        return True
+    monkeypatch.setattr(cli, "open_app_window", fake_open)
+    assert cli.launch_dashboard(tmp_path, window=True) == "app"
+    assert calls["size"] == (1024, 768) and calls["url"].startswith("file://")
+
+
+def test_no_window_flag_skips_browser_search(tmp_path, monkeypatch):
+    in_dir(tmp_path, cmd_init)
+    monkeypatch.setattr(cli, "find_browser",
+                        lambda: (_ for _ in ()).throw(AssertionError("searched")))
+    monkeypatch.setattr(cli.webbrowser, "open", lambda url: None)
+    assert cli.launch_dashboard(tmp_path, window=False) == "tab"
+
+
+def test_shortcut_linux_writes_desktop_entry(tmp_path, monkeypatch):
+    # we run on linux, so os.name/platform already match; only redirect HOME
+    in_dir(tmp_path, cmd_init)
+    monkeypatch.setattr(cli.Path, "home", staticmethod(lambda: tmp_path))
+    assert in_dir(tmp_path, cmd_shortcut) == 0
+    entry = (tmp_path / ".local/share/applications/muto.desktop").read_text()
+    assert "Name=MUTO" in entry and f"Path={tmp_path}" in entry
+    assert (tmp_path / "muto.png").is_file()
+
+
+def test_shortcut_installs_ico_on_windows(tmp_path, monkeypatch):
+    import types
+    in_dir(tmp_path, cmd_init)
+    # fake the os module reference so name=="nt" without mutating global os
+    monkeypatch.setattr(cli, "os", types.SimpleNamespace(name="nt"))
+    icon = cli._install_icon(tmp_path)
+    assert icon.name == "muto.ico" and icon.read_bytes()[:4] == b"\x00\x00\x01\x00"
+
+
+def test_find_browser_returns_path_or_none(monkeypatch):
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    monkeypatch.setattr(cli.Path, "is_file", lambda self: False)
+    assert cli.find_browser() is None
+
+
+def test_shortcut_and_stop_need_workspace(tmp_path):
+    import pytest
+    with pytest.raises(SystemExit):
+        in_dir(tmp_path, cmd_shortcut)

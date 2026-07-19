@@ -82,6 +82,17 @@ def _frame_keyframes(name: str, frames: list, color: str) -> str:
             f"  }}")
 
 
+def _favicon() -> str:
+    """Data URI for the app/taskbar icon (Hermès-orange muto sprite).
+
+    A Chrome/Edge --app window has no tab bar, so this favicon is what shows
+    as the window's taskbar icon. Built by scripts/build_icon.py."""
+    png = _data("favicon.png")
+    if not png.is_file():
+        return ""
+    return "data:image/png;base64," + base64.b64encode(png.read_bytes()).decode()
+
+
 def _font_face() -> str:
     """Embed the real VGA 8x16 bitmap font (built by scripts/build_font.py)."""
     woff2 = _data("vga_8x16.woff2")
@@ -144,6 +155,7 @@ def generate(state, root: Path) -> Path:
         mascots = '<div class="mascot codex roam-codex"></div><div class="mascot claude roam-claude"></div>'
 
     tokens = {
+        "@@FAVICON@@": _favicon(),
         "@@FONT_FACE@@": _font_face(),
         "@@LOGO@@": LOGO,
         "@@ALERT@@": alert,

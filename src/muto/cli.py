@@ -1,13 +1,14 @@
 """muto CLI—the launcher, cross-platform. (spec §9 + the screen-first flow)
 
 Commands:
-  muto          home (default): open the dashboard, stream POST checks into
-                status.js, then wait for the human to start the cycle
+  muto          home (default): open the dashboard as a standalone app window,
+                stream POST checks into status.js, then start the cycle
   muto init     create a cycle workspace in the current directory
                 (workspace/, task/, reports/...—code and data separated)
   muto doctor   POST checks only (claude/codex/auth), terminal output
   muto run      start the cycle
   muto stop     drop stop.flag (the loop halts before the next round)
+  muto shortcut create a desktop shortcut targeting this workspace
 
 The package (code) lives in site-packages; cycle data lives wherever the
 user ran `muto init`. Every command except doctor operates on the workspace
@@ -15,6 +16,7 @@ in the current directory.
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -36,7 +38,10 @@ bandwidth_level: 1        # bandwidth dial: 1 (action/where only) | 2 (expected 
 round_budget: 10          # round budget. Cycle ends when exhausted.
 auth_mode: subscription   # subscription | api_key (ANTHROPIC_API_KEY / OPENAI_API_KEY)
 timeout_seconds: 1800     # agent subprocess timeout
+window: true              # open the dashboard as a standalone app window (Chrome/Edge --app); false = default browser tab
 """
+
+WINDOW_SIZE = (1024, 768)
 
 WORKSPACE_DIRS = [
     "workspace/src", "workspace/surface", "task", "reports/dropped",
@@ -56,6 +61,72 @@ def require_root() -> Path:
               file=sys.stderr)
         raise SystemExit(1)
     return root
+
+
+def load_config(root: Path) -> dict:
+    try:
+        return yaml.safe_load((root / MARKER).read_text(encoding="utf-8")) or {}
+    except OSError:
+        return {}
+
+
+# ── standalone app window (Chrome/Edge --app) ───────────────────────────────
+
+def find_browser() -> Path | None:
+    """Locate a Chromium-family browser that supports --app windows."""
+    candidates = []
+    if os.name == "nt":
+        bases = [os.environ.get("PROGRAMFILES", ""),
+                 os.environ.get("PROGRAMFILES(X86)", ""),
+                 os.environ.get("LOCALAPPDATA", "")]
+        rel = [r"Google\Chrome\Application\chrome.exe",
+               r"Microsoft\Edge\Application\msedge.exe",
+               r"Chromium\Application\chrome.exe",
+               r"BraveSoftware\Brave-Browser\Application\brave.exe"]
+        for base in bases:
+            for r in rel:
+                if base:
+                    candidates.append(Path(base) / r)
+        exes = ("chrome", "msedge", "chromium", "brave")
+    else:
+        exes = ("google-chrome", "google-chrome-stable", "chromium",
+                "chromium-browser", "microsoft-edge", "brave-browser")
+        candidates += [Path(p) for p in (
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium")]
+    for exe in exes:
+        found = shutil.which(exe)
+        if found:
+            candidates.append(Path(found))
+    for c in candidates:
+        if c.is_file():
+            return c
+    return None
+
+
+def open_app_window(browser: Path, url: str, size=WINDOW_SIZE) -> bool:
+    """Launch a chrome-tabless app window; detached, non-blocking."""
+    try:
+        subprocess.Popen(
+            [str(browser), f"--app={url}",
+             f"--window-size={size[0]},{size[1]}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
+
+
+def launch_dashboard(root: Path, window: bool) -> str:
+    """Open the dashboard. Standalone app window if possible, else a tab."""
+    url = (root / "dashboard" / "index.html").resolve().as_uri()
+    if window:
+        browser = find_browser()
+        if browser and open_app_window(browser, url):
+            return "app"
+        print("  (no Chrome/Edge found—opening in the default browser)")
+    webbrowser.open(url)
+    return "tab"
 
 
 # ── POST checks ────────────────────────────────────────────────────────────
@@ -157,15 +228,18 @@ def cmd_doctor() -> int:
     return 0 if ok else 1
 
 
-def cmd_home() -> int:
+def cmd_home(window: bool | None = None) -> int:
     root = find_root()
     if root is None:
         cmd_init()
         root = require_root()
 
+    if window is None:
+        window = bool(load_config(root).get("window", True))
+
     # Screen first: open the dashboard, then stream the checks into status.js.
     write_status(root, "boot")
-    webbrowser.open((root / "dashboard" / "index.html").resolve().as_uri())
+    launch_dashboard(root, window)
 
     def stream(checks):
         write_status(root, "boot", checks=checks,
@@ -180,11 +254,17 @@ def cmd_home() -> int:
 
     write_status(root, "ready", checks=checks, task_present=True)
     print("ALL CHECKS PASSED.")
-    try:
-        input("Press Enter to START CYCLE... ")
-    except (EOFError, KeyboardInterrupt):
-        print("\nCancelled.")
-        return 1
+    # The Enter gate needs an interactive console. When launched without one
+    # (e.g. via the no-console `mutow` entry / a desktop shortcut), start the
+    # cycle automatically—the app window is the only surface the user sees.
+    if sys.stdin is not None and sys.stdin.isatty():
+        try:
+            input("Press Enter to START CYCLE... ")
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled.")
+            return 1
+    else:
+        print("No interactive console; starting cycle automatically.")
     return cmd_run()
 
 
@@ -209,21 +289,108 @@ def cmd_stop() -> int:
     return 0
 
 
+# ── desktop shortcut ────────────────────────────────────────────────────────
+
+def _install_icon(root: Path) -> Path:
+    """Copy the packaged app icon into the workspace for the shortcut."""
+    name, res = ("muto.ico", "data/muto.ico") if os.name == "nt" \
+        else ("muto.png", "data/favicon.png")
+    dst = root / name
+    dst.write_bytes(resources.files("muto").joinpath(res).read_bytes())
+    return dst
+
+
+def _shortcut_windows(root: Path, icon: Path) -> int:
+    # Prefer the no-console entry so the shortcut opens just the app window.
+    target = shutil.which("mutow") or shutil.which("muto")
+    if not target:
+        print("muto executable not found on PATH; install muto first.",
+              file=sys.stderr)
+        return 1
+    ps = (
+        "$d=[Environment]::GetFolderPath('Desktop');"
+        "$w=New-Object -ComObject WScript.Shell;"
+        "$s=$w.CreateShortcut((Join-Path $d 'MUTO.lnk'));"
+        f"$s.TargetPath='{target}';"
+        f"$s.WorkingDirectory='{root}';"
+        f"$s.IconLocation='{icon}';"
+        "$s.Description='muto validation cycle';"
+        "$s.Save()"
+    )
+    r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print("Failed to create shortcut:\n" + r.stderr, file=sys.stderr)
+        return 1
+    print("Desktop shortcut created: MUTO.lnk")
+    return 0
+
+
+def _shortcut_linux(root: Path, icon: Path) -> int:
+    entry = (
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=MUTO\n"
+        "Comment=muto validation cycle\n"
+        "Exec=muto\n"
+        f"Path={root}\n"
+        f"Icon={icon}\n"
+        "Terminal=true\n"
+    )
+    made = []
+    for d in (Path.home() / "Desktop", Path.home() / ".local/share/applications"):
+        if d.is_dir() or d == Path.home() / ".local/share/applications":
+            d.mkdir(parents=True, exist_ok=True)
+            p = d / "muto.desktop"
+            p.write_text(entry, encoding="utf-8")
+            p.chmod(0o755)
+            made.append(p)
+    print("Desktop entry created: " + ", ".join(str(p) for p in made))
+    return 0
+
+
+def _shortcut_macos(root: Path, icon: Path) -> int:
+    p = Path.home() / "Desktop" / "MUTO.command"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f'#!/bin/bash\ncd "{root}"\nexec muto\n', encoding="utf-8")
+    p.chmod(0o755)
+    print(f"Desktop launcher created: {p}")
+    return 0
+
+
+def cmd_shortcut() -> int:
+    root = require_root()
+    icon = _install_icon(root)
+    if os.name == "nt":
+        return _shortcut_windows(root, icon)
+    if sys.platform == "darwin":
+        return _shortcut_macos(root, icon)
+    return _shortcut_linux(root, icon)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="muto",
         description="Validation through enforced information asymmetry.")
+    win = parser.add_mutually_exclusive_group()
+    win.add_argument("--window", dest="window", action="store_true", default=None,
+                     help="open the dashboard as a standalone app window (default)")
+    win.add_argument("--no-window", dest="window", action="store_false",
+                     help="open the dashboard in the default browser tab")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("init", help="create a cycle workspace in the current directory")
     sub.add_parser("doctor", help="run POST checks (claude/codex/auth) in the terminal")
     sub.add_parser("run", help="start the cycle")
     sub.add_parser("stop", help="signal the running cycle to halt")
+    sub.add_parser("shortcut", help="create a desktop shortcut for this workspace")
     args = parser.parse_args(argv)
 
+    if args.command is None:
+        return cmd_home(window=args.window)
     return {
-        None: cmd_home,
         "init": cmd_init,
         "doctor": cmd_doctor,
         "run": cmd_run,
         "stop": cmd_stop,
+        "shortcut": cmd_shortcut,
     }[args.command]()
