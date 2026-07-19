@@ -1,3 +1,4 @@
 __pycache__/
 stop.flag
 reports/orchestrator.log
+dashboard/status.js

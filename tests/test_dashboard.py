@@ -53,3 +53,25 @@ def test_stop_button_present_with_flag_wiring(tmp_path):
     html = generate(CycleState(), tmp_path).read_text()
     assert 'id="stop"' in html and "[ STOP ]" in html
     assert "stop.flag" in html and "showSaveFilePicker" in html
+
+
+def test_boot_screen_and_poller(tmp_path):
+    html = generate(CycleState(), tmp_path).read_text()
+    assert 'id="boot"' in html and "NOT KNOWING IS THE ASSET." in html
+    assert "status.js?t=" in html and "setInterval(poll, 1000)" in html
+    assert "[START CYCLE]" in html and "BAKED_ROUND = 0" in html
+
+
+def test_generate_writes_cycle_status(tmp_path):
+    generate(CycleState(rounds=[rr(1, True, False, "initial noise")]), tmp_path)
+    status = (tmp_path / "dashboard" / "status.js").read_text()
+    assert status.startswith("window.MUTO_STATUS = ")
+    assert '"phase": "cycle"' in status and '"round": 1' in status
+
+
+def test_write_status_boot_phase(tmp_path):
+    dashboard_gen.write_status(tmp_path, "ready",
+                               checks=[{"name": "CLAUDE CLI", "state": "ok", "hint": ""}],
+                               task_present=True)
+    status = (tmp_path / "dashboard" / "status.js").read_text()
+    assert '"phase": "ready"' in status and '"CLAUDE CLI"' in status

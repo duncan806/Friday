@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>muto</title>
+<style>
+  body { background:#0000AA; color:#AAAAAA; font-family:'Px437 IBM VGA8',monospace;
+         margin:0; padding:16px; }
+  pre { margin:0; line-height:1.1; }
+  .title { color:#FFFF55; }
+  .alert { color:#FF5555; }
+  .go { color:#FFFF55; }
+  .blink { animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  #boot { text-align:center; padding-top:8vh; }
+  #boot .logo { color:#FFFF55; display:inline-block; text-align:left; }
+  #boot #post { display:inline-block; text-align:left; margin-top:24px; }
+  #boot #bootmsg { margin-top:24px; }
+  .stage { position:fixed; bottom:0; left:0; right:0; height:40px; }
+  .mascot { position:absolute; bottom:4px; width:16px; height:16px;
+             image-rendering: pixelated; }
+  .codex  { background:#FFFF55; box-shadow: 4px -16px 0 #FFFF55; }
+  .claude { background:#AAAAAA; box-shadow: -4px -16px 0 #AAAAAA; }
+  /* roaming regions—never overlap (visualization of information asymmetry) */
+  .roam-codex  { animation: roamc 9s linear infinite alternate; }
+  .roam-claude { animation: roama 11s linear infinite alternate; }
+  @keyframes roamc { from { left:2%; } to { left:42%; } }
+  @keyframes roama { from { left:58%; } to { left:96%; } }
+  /* only when the verdict passes: a one-time meeting at the center */
+  .meet  { left:2%; animation: meetc 4s linear forwards; }
+  .meet2 { left:96%; animation: meeta 4s linear forwards; }
+  @keyframes meetc { to { left:47%; } }
+  @keyframes meeta { to { left:53%; } }
+  #stop { background:#AAAAAA; color:#0000AA; border:2px solid #FFFF55;
+           font-family:inherit; font-size:inherit; padding:2px 10px; cursor:pointer; }
+  #stophint { color:#FFFF55; }
+</style></head><body>
+<div id="boot" hidden>
+<pre class="logo">
+███╗   ███╗ ██╗   ██╗ ████████╗  ██████╗
+████╗ ████║ ██║   ██║ ╚══██╔══╝ ██╔═══██╗
+██╔████╔██║ ██║   ██║    ██║    ██║   ██║
+██║╚██╔╝██║ ██║   ██║    ██║    ██║   ██║
+██║ ╚═╝ ██║ ╚██████╔╝    ██║    ╚██████╔╝
+╚═╝     ╚═╝  ╚═════╝     ╚═╝     ╚═════╝
+
+        NOT KNOWING IS THE ASSET.
+</pre>
+<pre id="post"></pre>
+<div id="bootmsg"></div>
+</div>
+<div id="main">
+<pre class="title">
+╔══════════════════════════════════════════════╗
+║  muto—validation dashboard                   ║
+╚══════════════════════════════════════════════╝
+</pre>
+
+<pre>
+╔══ CONVERGENCE CURVE ═════════════════════════╗
+(no rounds yet)
+╚══════════════════════════════════════════════╝
+╔══ QUADRANTS ═════════════════════════════════╗
+║ (no rounds yet)                                              ║
+╚══════════════════════════════════════════════╝
+status: running
+</pre>
+<p><button id="stop">[ STOP ]</button> <span id="stophint"></span></p>
+</div>
+<div class="stage"><div class="mascot codex roam-codex"></div><div class="mascot claude roam-claude"></div></div>
+<script>const BAKED_ROUND = 0;</script>
+<script>
+document.getElementById('stop').onclick = async () => {
+  const blob = new Blob(["stop"], {type: "text/plain"});
+  const hint = document.getElementById('stophint');
+  if (window.showSaveFilePicker) {
+    try {
+      const h = await showSaveFilePicker({suggestedName: "stop.flag"});
+      const w = await h.createWritable(); await w.write(blob); await w.close();
+    } catch (e) { return; }
+  } else {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = "stop.flag"; a.click();
+  }
+  hint.textContent = "place stop.flag in the muto folder to halt before the next round";
+};
+
+function poll() {
+  const old = document.getElementById('statusjs');
+  if (old) old.remove();
+  const s = document.createElement('script');
+  s.id = 'statusjs';
+  s.src = 'status.js?t=' + Date.now();
+  s.onload = render;
+  s.onerror = () => {};
+  document.body.appendChild(s);
+}
+
+function render() {
+  const st = window.MUTO_STATUS;
+  if (!st) return;
+  const boot = document.getElementById('boot');
+  const main = document.getElementById('main');
+  if (st.phase === 'cycle') {
+    boot.hidden = true; main.hidden = false;
+    if (st.round !== BAKED_ROUND) location.reload();
+    return;
+  }
+  boot.hidden = false; main.hidden = true;
+  const pad = n => ('CHECKING ' + n + ' ').padEnd(34, '.');
+  document.getElementById('post').textContent = (st.checks || []).map(c =>
+    pad(c.name) + ' [' +
+    (c.state === 'ok' ? ' OK ' : c.state === 'fail' ? 'FAIL' : '....') + ']' +
+    (c.hint ? '\n  -> ' + c.hint : '')).join('\n');
+  const msg = document.getElementById('bootmsg');
+  if (st.phase === 'ready') {
+    msg.innerHTML = '<span class="go blink">[START CYCLE]</span> press any key in the muto console window';
+  } else if (st.phase === 'failed') {
+    msg.innerHTML = '<span class="alert">boot halted—fix the item above, then run muto.bat again</span>';
+  } else {
+    msg.textContent = '';
+  }
+}
+
+setInterval(poll, 1000);
+poll();
+</script>
+</body></html>
