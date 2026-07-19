@@ -77,11 +77,11 @@ def main() -> int:
     print(f"sandbox: {sandbox}")
     print(f"status : {state.status}")
     for r in state.rounds:
-        print(f"  R{r.round}: {r.quadrant} (막힘={r.blocked}, 편차={r.deviation}, "
-              f"드롭={r.dropped_count})")
+        print(f"  R{r.round}: {r.quadrant} (blocked={r.blocked}, deviation={r.deviation}, "
+              f"dropped={r.dropped_count})")
     ok = (state.status == "awaiting_verdict"
           and [r.quadrant for r in state.rounds]
-          == ["초기 노이즈", "진행 중", "판정 대기"]
+          == ["initial noise", "in progress", "awaiting verdict"]
           and (sandbox / "dashboard" / "index.html").is_file())
     print("SMOKE " + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1

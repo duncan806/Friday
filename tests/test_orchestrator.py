@@ -49,7 +49,7 @@ def test_awaiting_verdict_stops_cycle(tmp_path):
         ("도달하면 안 됨", False, True),
     ])
     assert state.status == "awaiting_verdict"
-    assert [r.quadrant for r in state.rounds] == ["초기 노이즈", "진행 중", "판정 대기"]
+    assert [r.quadrant for r in state.rounds] == ["initial noise", "in progress", "awaiting verdict"]
     assert (root / "predictions" / "round_001.md").is_file()
     assert (root / "reports" / "round_003.md").is_file()
 
@@ -57,14 +57,14 @@ def test_awaiting_verdict_stops_cycle(tmp_path):
 def test_toxic_convergence_does_not_stop(tmp_path):
     _, state = run(tmp_path, [("", False, True)] * 5)
     assert state.status == "budget_exhausted"
-    assert all(r.quadrant == "토스틱 수렴 — 경보" for r in state.rounds)
+    assert all(r.quadrant == "toxic convergence—alert" for r in state.rounds)
 
 
 def test_build_failure_is_blockage(tmp_path):
     root, state = run(tmp_path, [("", True, False)] * 5)
     assert state.status == "budget_exhausted"           # blocked, so never awaiting verdict
     assert state.rounds[0].blocked and state.rounds[0].build_failed
-    assert "제품 출시 불가" in (root / "reports" / "round_001.md").read_text()
+    assert "product cannot ship" in (root / "reports" / "round_001.md").read_text()
 
 
 def test_integrity_breach_voids_round(tmp_path):

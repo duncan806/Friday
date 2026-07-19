@@ -1,6 +1,6 @@
 """muto dashboard generator—DOS-style static single-file HTML. (spec §8)
 
-No server. JS for animation only, plus the single [중단] control (spec §7:
+No server. JS for animation only, plus the single [STOP] control (spec §7:
 the stop button is one of the four permitted human controls). Gradients,
 rounded corners, and shadows are banned outright.
 
@@ -29,21 +29,21 @@ def _ascii_curve(rounds) -> str:
         return "(no rounds yet)"
     bars = "".join("▒" if r.void else _BLOCK[r.blocked] for r in rounds)
     labels = "".join(str(r.round % 10) for r in rounds)
-    return f"막힘 {bars}\n라운드{labels}   █=막힘 ░=없음 ▒=무효"
+    return f"stuck {bars}\nround {labels}   █=blocked ░=clear ▒=void"
 
 
 def _quadrant_rows(rounds) -> str:
     return "\n".join(
-        f"║ R{r.round:03d} │ 막힘 {'유' if r.blocked else '무'} │ "
-        f"편차 {'유' if r.deviation else '무'} │ {r.quadrant:<14}║"
-        for r in rounds) or "║ (아직 라운드 없음)                          ║"
+        f"║ R{r.round:03d} │ blocked {'Y' if r.blocked else 'N'} │ "
+        f"deviation {'Y' if r.deviation else 'N'} │ {r.quadrant:<24}║"
+        for r in rounds) or "║ (no rounds yet)                                              ║"
 
 
 def generate(state, root: Path) -> Path:
     rounds = state.rounds
-    toxic = bool(rounds) and rounds[-1].quadrant == "토스틱 수렴 — 경보"
+    toxic = bool(rounds) and rounds[-1].quadrant == "toxic convergence—alert"
     passed = state.status == "verdict_passed"
-    alert = ('<div class="alert blink">⚠ 토스틱 수렴 — 경보 ⚠</div>' if toxic else "")
+    alert = ('<div class="alert blink">⚠ TOXIC CONVERGENCE—ALERT ⚠</div>' if toxic else "")
 
     if passed:
         mascots = '<div class="mascot codex meet"></div><div class="mascot claude meet2"></div>'
@@ -86,15 +86,15 @@ def generate(state, root: Path) -> Path:
 </pre>
 {alert}
 <pre>
-╔══ 수렴 곡선 ═════════════════════════════════╗
+╔══ CONVERGENCE CURVE ═════════════════════════╗
 {_ascii_curve(rounds)}
 ╚══════════════════════════════════════════════╝
-╔══ 사분면 ════════════════════════════════════╗
+╔══ QUADRANTS ═════════════════════════════════╗
 {_quadrant_rows(rounds)}
 ╚══════════════════════════════════════════════╝
 status: {state.status}
 </pre>
-<p><button id="stop">[ 중단 ]</button> <span id="stophint"></span></p>
+<p><button id="stop">[ STOP ]</button> <span id="stophint"></span></p>
 <div class="stage">{mascots}</div>
 <script>
 document.getElementById('stop').onclick = async () => {{
@@ -109,7 +109,7 @@ document.getElementById('stop').onclick = async () => {{
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = "stop.flag"; a.click();
   }}
-  hint.textContent = "stop.flag를 muto 폴더에 두면 다음 라운드 전에 정지합니다";
+  hint.textContent = "place stop.flag in the muto folder to halt before the next round";
 }};
 </script>
 </body></html>"""

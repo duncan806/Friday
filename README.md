@@ -1,32 +1,40 @@
 # muto
 
-**모르는 것이 자산이다.** muto는 Why와 How를 분리 보유한 두 AI 에이전트가
-"막힘 보고"라는 단일 채널로만 통신하며 소프트웨어를 수렴시키는 validation 시스템이다.
-기존 루프는 "올바르게 만들었는가"(verification)를 재고, 이 시스템은
-"올바른 것을 만들었는가"(validation)를 잰다.
+**Not knowing is the asset.** muto is a validation system in which two AI
+agents—one holding only the Why, the other only the How—converge on software
+while communicating through a single channel: blockage reports.
+The conventional loop measures "did we build it right" (verification);
+this system measures "did we build the right thing" (validation).
 
-- Claude(사용자 역)는 과제(Why)만 갖고 코드를 볼 수 없다—세계는 `workspace/surface/` 뿐이다.
-- Codex(구현자 역)는 코드(How)만 갖고 과제를 볼 수 없다—입력은 `reports/` 뿐이다.
-- 이 박탈은 프롬프트 요청이 아니라 파일시스템으로 물리적으로 강제한다
-  (`integrity.py`의 두 assert가 시스템 신뢰성의 전부다).
+- Claude (user role) holds only the task (Why) and cannot see the code—its
+  entire world is `workspace/surface/`.
+- Codex (builder role) holds only the code (How) and cannot see the task—its
+  only input is `reports/`.
+- This deprivation is enforced physically by the filesystem, not requested by
+  prompt (the two asserts in `integrity.py` are the entirety of system
+  reliability).
 
-## 실행
+## Running
 
 ```
-./setup.sh                 # CLI 설치·인증 검사
-$EDITOR task/task.md       # 과제 작성 (사이클 시작 후 읽기 전용)
-python3 orchestrator.py    # 라운드 루프 시작
-open dashboard/index.html  # 도스 스타일 대시보드
+./setup.sh                 # check CLI installation and auth (muto.bat on Windows)
+$EDITOR task/task.md       # write the task (read-only once the cycle starts)
+python3 orchestrator.py    # start the round loop
+open dashboard/index.html  # DOS-style dashboard
 ```
 
-## 적용 범위
+## Scope
 
-표면이 명확하고(CLI 인터페이스 등), 막힘이 관찰 가능하며, 빌드 사이클이 짧은
-과제에 적용한다. **표면이 얇은 과제(순수 알고리즘, 라이브러리)는 적용 범위 밖이다.**
+Apply muto to tasks with a clear surface (a CLI interface, etc.), observable
+blockages, and a short build cycle. **Tasks with a thin surface (pure
+algorithms, libraries) are out of scope.**
 
-## 미해결 문제 (스펙의 일부다—지우지 말 것)
+## Open problems (these are part of the spec—do not delete)
 
-U1. 필터의 의도 누출 판정 정확도—dropped 로그 감사로 관측만 가능.
-U2. Claude 예측 강제의 연기 가능성—파일시스템 강제 불가 영역, 프롬프트 층위 잔여 위험.
-U3. 불가피성 판정의 판정—인간에서 종결하며, 이는 결함이 아니라 시스템의 정직한
-경계 선언이다. verdicts/ 판례집 축적이 유일한 개선 경로.
+U1. Accuracy of the filter's intent-leak judgment—only observable through
+auditing the dropped log.
+U2. Claude may perform the prediction ritual without committing to it—an area
+filesystem enforcement cannot reach; residual risk remains at the prompt layer.
+U3. Judging the judgment of inevitability—terminates at the human, and this is
+not a defect but the system's honest declaration of its boundary. Accumulating
+the verdicts/ casebook is the only path of improvement.

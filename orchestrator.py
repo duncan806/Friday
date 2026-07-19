@@ -37,10 +37,10 @@ from integrity import (
 ROOT = Path(__file__).resolve().parent
 
 QUADRANTS = {
-    (True, False): "초기 노이즈",
-    (True, True): "진행 중",
-    (False, False): "토스틱 수렴 — 경보",
-    (False, True): "판정 대기",
+    (True, False): "initial noise",
+    (True, True): "in progress",
+    (False, False): "toxic convergence—alert",
+    (False, True): "awaiting verdict",
 }
 
 
@@ -180,7 +180,7 @@ class Orchestrator:
                 # build failure auto-converts to the maximum-severity blockage
                 path = self._p("reports", f"round_{n:03d}.md")
                 path.write_text(path.read_text(encoding="utf-8") +
-                                "\nbuild_failure: 제품 출시 불가\n", encoding="utf-8")
+                                "\nbuild_failure: product cannot ship\n", encoding="utf-8")
 
             blocked = bool(str(kept.get("where_stuck", "")).strip()) or not build_ok
             deviation = bool(report.get("deviation", False))
@@ -192,7 +192,7 @@ class Orchestrator:
         except IntegrityBreach as e:
             self._log(f"INTEGRITY_BREACH round={n}: {e}")
             result = RoundResult(round=n, blocked=False, deviation=False,
-                                 quadrant="무효", void=True)
+                                 quadrant="void", void=True)
 
         self.state.rounds.append(result)
         # e. regenerate the dashboard
@@ -202,7 +202,7 @@ class Orchestrator:
 
     # ── cycle ──
     def run_cycle(self) -> CycleState:
-        # File-based stop signal: the dashboard's [중단] button drops
+        # File-based stop signal: the dashboard's [STOP] button drops
         # stop.flag into the root; the loop checks it before every round.
         stop_flag = self.root / "stop.flag"
         stop_flag.unlink(missing_ok=True)  # clear a stale flag from a previous run
@@ -214,7 +214,7 @@ class Orchestrator:
                 self._log(f"stop.flag detected before round {n}: aborted")
                 break
             result = self.run_round(n)
-            if not result.void and result.quadrant == "판정 대기":
+            if not result.void and result.quadrant == "awaiting verdict":
                 self.state.status = "awaiting_verdict"
                 break
         else:

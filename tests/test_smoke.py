@@ -11,7 +11,7 @@ def test_three_round_smoke(tmp_path):
     state = run_smoke(sandbox)
 
     assert state.status == "awaiting_verdict"
-    assert [r.quadrant for r in state.rounds] == ["초기 노이즈", "진행 중", "판정 대기"]
+    assert [r.quadrant for r in state.rounds] == ["initial noise", "in progress", "awaiting verdict"]
 
     # artifacts: 3 predictions, 3 reports, dashboard
     assert len(list((sandbox / "predictions").glob("round_*.md"))) == 3

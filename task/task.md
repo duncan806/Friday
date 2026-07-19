@@ -1,13 +1,13 @@
-# 최초 실험 과제 (스펙 §10)
+# First experimental task (spec §10)
 
-CSV 파일을 받아 자연어 질문에 답하는 CLI 도구.
+A CLI tool that takes a CSV file and answers natural-language questions.
 
-당신(사용자)은 이 도구로 실제 CSV 파일을 열고, 실제 질문을 던져,
-실제 답을 받아야 한다. 예:
+You (the user) must open real CSV files with this tool, ask real questions,
+and receive real answers. For example:
 
-- 매출 CSV에서 "3월 총매출은 얼마인가?"
-- 직원 명단 CSV에서 "부서별 인원수를 알려줘"
-- 로그 CSV에서 "가장 빈번한 에러 유형은?"
+- From a sales CSV: "What is the total revenue for March?"
+- From an employee roster CSV: "How many people are in each department?"
+- From a log CSV: "What is the most frequent error type?"
 
-표면이 명확하고(CLI 인터페이스), 막힘이 관찰 가능하며(실제 CSV로 실제
-질문에 답하다 실패), 빌드 사이클이 짧다.
+The surface is clear (a CLI interface), blockages are observable (failing
+while answering real questions on real CSVs), and the build cycle is short.
