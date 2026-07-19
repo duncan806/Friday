@@ -45,8 +45,11 @@ def test_meet_only_on_verdict_passed(tmp_path):
 def test_dos_aesthetics(tmp_path):
     html = generate(CycleState(), tmp_path).read_text()
     assert "#0000AA" in html and "╔" in html and "monospace" in html
-    for banned in ("gradient", "border-radius"):
-        assert banned not in html
+    # rounded corners stay banned; gradient functions appear only in the
+    # CRT glass overlays (scanlines, vignette), never as decoration
+    assert "border-radius" not in html
+    assert html.count("radial-gradient") == 1
+    assert html.count("repeating-linear-gradient") == 1
 
 
 def test_stop_button_present_with_flag_wiring(tmp_path):
@@ -75,3 +78,36 @@ def test_write_status_boot_phase(tmp_path):
                                task_present=True)
     status = (tmp_path / "dashboard" / "status.js").read_text()
     assert '"phase": "ready"' in status and '"CLAUDE CLI"' in status
+
+
+def test_crt_font_embedded(tmp_path):
+    html = generate(CycleState(), tmp_path).read_text()
+    assert "@font-face" in html and "font/woff2;base64," in html
+    assert "'MutoVGA','Px437 IBM VGA 8x16',monospace" in html
+
+
+def test_crt_effects_restrained(tmp_path):
+    html = generate(CycleState(), tmp_path).read_text()
+    assert "text-shadow: 0 0 4px currentColor" in html      # phosphor
+    assert "rgba(0,0,0,0.06) 0 1px, transparent 1px 2px" in html  # scanlines
+    assert "poweron 0.4s" in html                           # power-on, one-shot
+    assert "ease-out 1" in html
+
+
+def test_palette_stays_dos16(tmp_path):
+    html = generate(CycleState(), tmp_path).read_text()
+    import re as _re
+    css = html.split("</style>")[0]
+    hexes = {h.upper() for h in _re.findall(r"#([0-9a-fA-F]{6})\b", css)}
+    assert hexes <= {"0000AA", "AAAAAA", "FFFF55", "FF5555", "000000"}
+
+
+def test_mascot_sprites_16x16_3frames(tmp_path):
+    for frames in (dashboard_gen.CODEX_FRAMES, dashboard_gen.CLAUDE_FRAMES):
+        assert len(frames) == 3
+        for art in frames:
+            rows = [r.strip() for r in art.strip().splitlines()]
+            assert len(rows) == 16 and all(len(r) == 16 for r in rows)
+    html = generate(CycleState(), tmp_path).read_text()
+    assert "@keyframes cframes" in html and "@keyframes aframes" in html
+    assert "steps(1)" in html and "image-rendering: pixelated" in html
