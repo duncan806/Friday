@@ -16,12 +16,34 @@ from .integrations import (connect, connect_repository, create_pull_request,
 from .natural import interpret
 
 ESC = "\x1b["
-YELLOW, CYAN, DIM, RED, RESET = ESC + "93m", ESC + "96m", ESC + "2m", ESC + "91m", ESC + "0m"
+ORANGE, IVORY = ESC + "38;5;208m", ESC + "38;5;230m"
+YELLOW, CYAN, DIM, RED, RESET = ORANGE, IVORY, ESC + "38;5;245m", ESC + "38;5;203m", ESC + "0m"
 SPIN = "|/-\\"
+VT_ENABLED = os.name != "nt"
+
+
+def _enable_terminal():
+    """Enable ANSI processing on Windows; retain a non-ANSI clear fallback."""
+    global VT_ENABLED
+    if os.name != "nt":
+        VT_ENABLED = True
+        return
+    try:
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.GetStdHandle(-11)
+        mode = ctypes.c_uint()
+        if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+            VT_ENABLED = bool(kernel.SetConsoleMode(handle, mode.value | 0x0004))
+    except (AttributeError, OSError):
+        VT_ENABLED = False
 
 
 def _clear():
-    print(ESC + "2J" + ESC + "H", end="", flush=True)
+    if VT_ENABLED:
+        print(ESC + "2J" + ESC + "H", end="", flush=True)
+    elif os.name == "nt":
+        os.system("cls")
 
 
 def _status(root: Path) -> dict:
@@ -51,19 +73,28 @@ def loading(root: Path, checks_fn) -> bool:
         done.set()
 
     threading.Thread(target=work, daemon=True).start()
+    _clear(); _header(root)
+    print(f"\n{DIM}INITIALIZING{RESET}")
+    printed = 0
     i = 0
     while not done.wait(0.08):
-        _clear(); _header(root)
-        print(f"\n {CYAN}{SPIN[i % len(SPIN)]}{RESET} loading environment and credentials\n")
-        for check in checks:
+        while printed < len(checks):
+            check = checks[printed]
             icon = f"{CYAN}[ok]{RESET}" if check["state"] == "ok" else f"{RED}[!!]{RESET}"
-            print(f"   {icon} {check['name'].lower()}")
+            print(f"\r{' ' * 72}\r  {icon} {check['name'].lower()}")
+            if check.get("hint"):
+                print(f"       {DIM}{check['hint']}{RESET}")
+            printed += 1
+        print(f"\r  {ORANGE}{SPIN[i % len(SPIN)]}{RESET} verifying local environment", end="", flush=True)
         i += 1
-    _clear(); _header(root)
-    for check in checks:
+    while printed < len(checks):
+        check = checks[printed]
         icon = f"{CYAN}[ok]{RESET}" if check["state"] == "ok" else f"{RED}[!!]{RESET}"
-        print(f"   {icon} {check['name'].lower()}")
-        if check.get("hint"): print(f"     {DIM}{check['hint']}{RESET}")
+        print(f"\r{' ' * 72}\r  {icon} {check['name'].lower()}")
+        if check.get("hint"): print(f"       {DIM}{check['hint']}{RESET}")
+        printed += 1
+    print(f"\r{' ' * 72}\r  {IVORY}[ready]{RESET} environment verified")
+    time.sleep(0.25)
     return result["ok"]
 
 
@@ -108,6 +139,19 @@ def _integration_line(root: Path) -> str:
         mark = "+" if item.get("authenticated") else "!" if item.get("installed") else "x"
         parts.append(f"{mark} {name}")
     return "  ".join(parts)
+
+
+def _home(root: Path, state: dict):
+    status = state.get("status") or "ready"
+    round_no = state.get("round", 0)
+    print(f"\n{ORANGE}+-- SESSION ---------------------------------------------------------+{RESET}")
+    print(f"| state       {IVORY}{status:<54}{RESET}|")
+    print(f"| round       {round_no:<54}|")
+    print(f"| {_context_line(root):<66}|")
+    print(f"| {_integration_line(root):<66}|")
+    print(f"{ORANGE}+--------------------------------------------------------------------+{RESET}")
+    print(f"\n{DIM}Describe the outcome. Muto will plant the task, leave you out of the"
+          f" loop, and return only when human judgment is legitimate.{RESET}")
 
 
 def _edit_task(root: Path):
@@ -188,6 +232,7 @@ def monitor(root: Path, stop_fn):
 
 
 def run(root: Path, checks_fn, start_fn, stop_fn) -> int:
+    _enable_terminal()
     if not loading(root, checks_fn):
         print(f"\n{RED}environment check failed{RESET}")
         return 1
@@ -203,11 +248,7 @@ def run(root: Path, checks_fn, start_fn, stop_fn) -> int:
     while True:
         state = _status(root)
         _clear(); _header(root)
-        print(f"\n{_context_line(root)}")
-        print(_integration_line(root))
-        print(f"status: {state.get('status') or 'ready'} | round: {state.get('round', 0)}")
-        print(f"\n{DIM}Describe an outcome to start a cycle. Ask naturally to add data,"
-              f" stop, inspect status, connect providers, or create a PR.{RESET}")
+        _home(root, state)
         try: command = input(f"\n{YELLOW}muto >{RESET} ").strip()
         except (EOFError, KeyboardInterrupt): return 0
         try:

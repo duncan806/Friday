@@ -16,7 +16,12 @@ PROVIDERS = {
 
 def _run(command: list[str], cwd: Path, timeout: int = 20) -> subprocess.CompletedProcess | None:
     try:
-        return subprocess.run(command, cwd=cwd, capture_output=True, text=True,
+        executable = shutil.which(command[0])
+        if not executable:
+            return None
+        return subprocess.run([executable, *command[1:]], cwd=cwd,
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
                               timeout=timeout, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -51,9 +56,10 @@ def connect(root: Path, provider: str) -> int:
     if provider not in PROVIDERS:
         raise ValueError(f"unknown provider: {provider}")
     spec = PROVIDERS[provider]
-    if not shutil.which(spec["exe"]):
+    executable = shutil.which(spec["exe"])
+    if not executable:
         raise RuntimeError(f"{spec['exe']} CLI is not installed")
-    return subprocess.run(spec["login"], cwd=root).returncode
+    return subprocess.run([executable, *spec["login"][1:]], cwd=root).returncode
 
 
 def sync_github(root: Path) -> int:

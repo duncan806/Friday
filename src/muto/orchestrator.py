@@ -21,6 +21,7 @@ Otherwise repeat until the round budget runs out.
 """
 
 import json
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from importlib import resources
@@ -83,6 +84,7 @@ class CLIAgents:
 
     def claude(self, prompt: str) -> str:
         surface = self.root / "workspace" / "surface"
+        executable = shutil.which("claude") or "claude"
         # The user role must be able to EXECUTE the product, but never edit
         # files (Edit,Write) or read source (Read,Glob,Grep). Blocking Read is
         # the crux: it shuts down .pyz unpacking and source browsing via the
@@ -98,7 +100,7 @@ class CLIAgents:
         # boundary (raw `cat ../src` reads remain a documented residual, U4).
         try:
             r = subprocess.run(
-            ["claude", "-p", prompt,
+            [executable, "-p", prompt,
              "--allowedTools", "Bash",
              "--disallowedTools", "Edit,Write,Read,Glob,Grep"],
             cwd=surface, capture_output=True, text=True, timeout=self.timeout)
@@ -110,9 +112,10 @@ class CLIAgents:
         return r.stdout
 
     def codex(self, prompt: str) -> tuple[str, bool]:
+        executable = shutil.which("codex") or "codex"
         try:
             r = subprocess.run(
-            ["codex", "exec", "--sandbox", "workspace-write",
+            [executable, "exec", "--sandbox", "workspace-write",
              "--cd", "workspace", prompt],
             cwd=self.root, capture_output=True, text=True, timeout=self.timeout)
         except subprocess.TimeoutExpired:
