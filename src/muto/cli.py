@@ -157,7 +157,11 @@ def launch_control_ui(root: Path, window: bool, port: int = 8765) -> str:
 
 def _auth_probe(cmd: list) -> bool:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True,
+        executable = shutil.which(cmd[0])
+        if not executable:
+            return False
+        return subprocess.run([executable, *cmd[1:]], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
                               timeout=180).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -175,13 +179,10 @@ def run_checks(root: Path | None, on_update=None) -> tuple[list, bool]:
         ("CODEX CLI", lambda: shutil.which("codex") is not None,
          "install it: npm install -g @openai/codex"),
         ("CLAUDE AUTH",
-         lambda: _auth_probe(["claude", "-p", "reply with exactly: ok"]),
+         lambda: _auth_probe(["claude", "auth", "status"]),
          "run claude once and complete the browser login"),
-        # --skip-git-repo-check so a missing repo can't masquerade as an auth
-        # failure; this probe measures auth validity only (matches CLAUDE AUTH).
         ("CODEX AUTH",
-         lambda: _auth_probe(["codex", "exec", "--sandbox", "read-only",
-                              "--skip-git-repo-check", "reply with exactly: ok"]),
+         lambda: _auth_probe(["codex", "login", "status"]),
          "run codex login"),
     ]
     if root is not None:

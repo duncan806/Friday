@@ -79,7 +79,7 @@ def test_workspace_git_check_reported_separately(tmp_path, monkeypatch):
     assert next(c for c in checks if c["name"] == "CODEX AUTH")["state"] == "ok"
 
 
-def test_codex_auth_probe_skips_git_repo_check(monkeypatch):
+def test_auth_probes_use_status_without_model_calls(monkeypatch):
     seen = {}
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/" + name)
     def fake_probe(cmd):
@@ -88,7 +88,7 @@ def test_codex_auth_probe_skips_git_repo_check(monkeypatch):
         return True
     monkeypatch.setattr(cli, "_auth_probe", fake_probe)
     cli.run_checks(None)
-    assert "--skip-git-repo-check" in seen["cmd"]
+    assert seen["cmd"] == ["codex", "login", "status"]
 
 
 def test_window_config_default_and_flag(tmp_path):
