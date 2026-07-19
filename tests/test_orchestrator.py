@@ -113,3 +113,38 @@ def test_stale_stop_flag_cleared_at_cycle_start(tmp_path):
     state = orch.run_cycle()
     assert state.status == "budget_exhausted"
     assert len(state.rounds) == 5
+
+
+def test_surface_absent_substitutes_product_cannot_ship(tmp_path):
+    root = make_root(tmp_path)
+    import shutil
+    shutil.rmtree(root / "workspace" / "surface")  # no build artifact
+
+    calls = {"claude": 0}
+    class NoSurfaceAgents(ScriptedAgents):
+        def claude(self, prompt):
+            calls["claude"] += 1
+            return super().claude(prompt)
+
+    orch = Orchestrator(root=root, agents=NoSurfaceAgents([("x", True, True)] * 3))
+    result = orch.run_round(1)
+    # Claude turn skipped entirely; report is the max-severity substitute
+    assert calls["claude"] == 0
+    assert not result.void and result.blocked
+    report = (root / "reports" / "round_001.md").read_text()
+    assert "product cannot ship" in report
+    assert not (root / "predictions" / "round_001.md").exists()
+
+
+def test_surface_is_file_voids_round_without_report(tmp_path):
+    root = make_root(tmp_path)
+    import shutil
+    shutil.rmtree(root / "workspace" / "surface")
+    (root / "workspace" / "surface").write_text("not a directory")
+
+    orch = Orchestrator(root=root, agents=ScriptedAgents([("x", True, True)] * 3))
+    result = orch.run_round(1)
+    assert result.void and result.quadrant == "void"
+    # a wrong report is worse than no report: none is written
+    assert not (root / "reports" / "round_001.md").exists()
+    assert "INTEGRITY_BREACH" in (root / "reports" / "orchestrator.log").read_text()

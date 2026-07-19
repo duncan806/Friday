@@ -162,3 +162,14 @@ def test_shortcut_and_stop_need_workspace(tmp_path):
     import pytest
     with pytest.raises(SystemExit):
         in_dir(tmp_path, cmd_shortcut)
+
+
+def test_init_creates_gitkeep_and_tracks_skeleton(tmp_path):
+    import subprocess
+    in_dir(tmp_path, cmd_init)
+    assert (tmp_path / "workspace" / "src" / ".gitkeep").is_file()
+    assert (tmp_path / "workspace" / "surface" / ".gitkeep").is_file()
+    # the round-0 baseline commit records the skeleton
+    tracked = subprocess.run(["git", "-C", str(tmp_path / "workspace"),
+                              "ls-files"], capture_output=True, text=True).stdout
+    assert "src/.gitkeep" in tracked and "surface/.gitkeep" in tracked

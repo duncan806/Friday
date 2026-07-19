@@ -72,3 +72,26 @@ def test_prompt_leaks_prediction(secrets):
 
 def test_prompt_clean_when_no_secret_files(tmp_path):
     assert_codex_prompt_clean("anything", tmp_path / "nope.md", tmp_path / "nopreds")
+
+
+def test_surface_cwd_ok(ws):
+    from muto.integrity import assert_surface_cwd
+    got = assert_surface_cwd(ws)
+    assert got == (ws.resolve() / "surface")
+
+
+def test_surface_cwd_breach_when_file(tmp_path):
+    from muto.integrity import assert_surface_cwd
+    (tmp_path / "workspace").mkdir()
+    (tmp_path / "workspace" / "surface").write_text("i am a file, not a dir")
+    with pytest.raises(IntegrityBreach):
+        assert_surface_cwd(tmp_path / "workspace")
+
+
+def test_surface_cwd_breach_when_symlink(tmp_path):
+    from muto.integrity import assert_surface_cwd
+    (tmp_path / "workspace").mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    os.symlink(tmp_path / "elsewhere", tmp_path / "workspace" / "surface")
+    with pytest.raises(IntegrityBreach):
+        assert_surface_cwd(tmp_path / "workspace")

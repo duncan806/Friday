@@ -195,6 +195,12 @@ def cmd_init() -> int:
     root = Path.cwd()
     for d in WORKSPACE_DIRS:
         (root / d).mkdir(parents=True, exist_ok=True)
+    # workspace/src and workspace/surface must exist and be git-tracked so
+    # Codex has a place to build and the round-0 baseline is complete.
+    for sub in ("src", "surface"):
+        keep = root / "workspace" / sub / ".gitkeep"
+        if not keep.is_file():
+            keep.write_text("", encoding="utf-8")
     if not (root / MARKER).is_file():
         (root / MARKER).write_text(DEFAULT_CONFIG, encoding="utf-8")
     for name in ("claude_user.md", "codex_builder.md"):

@@ -1,13 +1,18 @@
 """muto integrity asserts—spec §3.
 
-These two asserts are the entirety of system reliability.
-On failure, raise IntegrityBreach; the orchestrator voids the round and
-records INTEGRITY_BREACH in the log.
+These asserts are the entirety of system reliability. On failure, raise
+IntegrityBreach; the orchestrator voids the round, writes no report, and
+records INTEGRITY_BREACH in the log (a wrong report is worse than none).
 
 1. assert_claude_isolation: before invoking Claude, verify that src/ is
    unreachable from surface (the cwd)—path containment plus symlink-escape
    checks.
-2. assert_codex_prompt_clean: when assembling the Codex prompt, verify that
+2. assert_surface_cwd: before invoking Claude, verify that surface exists as
+   a real directory whose resolved absolute path is exactly the cwd we will
+   hand the subprocess—so a report can never be produced from the wrong
+   working directory. (Absence is not a breach: the caller substitutes a
+   product-cannot-ship report instead—spec §4d.)
+3. assert_codex_prompt_clean: when assembling the Codex prompt, verify that
    the contents of task.md and predictions/ are not included.
 """
 
@@ -16,6 +21,28 @@ from pathlib import Path
 
 class IntegrityBreach(AssertionError):
     """Information asymmetry has been broken. The round is void."""
+
+
+def assert_surface_cwd(workspace: Path) -> Path:
+    """Verify surface is a real directory that will be Claude's exact cwd.
+
+    Returns the verified absolute surface path. Raises IntegrityBreach if
+    surface exists but is not a directory, or is a symlink that would land
+    the working directory somewhere other than workspace/surface. Surface
+    *absence* is deliberately NOT a breach here—the caller checks existence
+    first and substitutes a product-cannot-ship report.
+    """
+    workspace = Path(workspace).resolve()
+    surface = workspace / "surface"
+    if not surface.is_dir():
+        raise IntegrityBreach(f"surface exists but is not a directory: {surface}")
+    # the cwd the subprocess lands in (symlinks resolved) must equal the
+    # expected absolute path exactly—no symlink redirection
+    landed = surface.resolve()
+    if landed != surface:
+        raise IntegrityBreach(
+            f"surface cwd mismatch: would land in {landed}, expected {surface}")
+    return surface
 
 
 def assert_claude_isolation(workspace: Path) -> None:

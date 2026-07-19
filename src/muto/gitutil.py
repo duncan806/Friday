@@ -47,6 +47,8 @@ def init_repo(workspace: Path) -> bool:
         return False
     workspace.mkdir(parents=True, exist_ok=True)
     _run(["git", "init", "-q"], workspace)
+    # stage the skeleton (src/surface .gitkeep) so the baseline records it
+    _run(["git", "add", "-A"], workspace)
     _run(["git", *_IDENT, "commit", "--allow-empty", "-q", "-m",
           "muto: round 0 (workspace initialized)"], workspace)
     return is_repo(workspace)

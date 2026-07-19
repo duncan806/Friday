@@ -32,6 +32,7 @@ from .integrity import (
     IntegrityBreach,
     assert_claude_isolation,
     assert_codex_prompt_clean,
+    assert_surface_cwd,
 )
 
 QUADRANTS = {
@@ -146,31 +147,52 @@ class Orchestrator:
         workspace = self._p("workspace")
         level = int(self.config.get("bandwidth_level", 1))
 
+        surface = workspace / "surface"
         try:
-            # a. pre-registered prediction (Claude only, hidden from Codex)
-            assert_claude_isolation(workspace)
-            pred_prompt = self._load_prompt("claude_user.md", task=task_text,
-                                            round=n, mode="predict")
-            prediction = self.agents.claude(pred_prompt)
-            self._p("predictions", f"round_{n:03d}.md").write_text(
-                prediction, encoding="utf-8")
+            if not surface.exists():
+                # surface absent: no build artifact to test. Skip the whole
+                # Claude turn (its cwd would be invalid) and substitute the
+                # maximum-severity report—same path as a build failure (§4d).
+                self._log(f"round={n}: surface absent, skipping Claude turn")
+                report = {"action_taken": "",
+                          "where_stuck": "no build artifact in surface/ to test"}
+                kept, dropped = report, []
+                self._p("reports", f"round_{n:03d}.md").write_text(
+                    yaml.safe_dump({"report": {**kept, "round": n}},
+                                   allow_unicode=True, sort_keys=False) +
+                    "build_failure: product cannot ship\n",
+                    encoding="utf-8")
+            else:
+                # Integrity gate (item 1): surface must be a real directory
+                # that is exactly Claude's cwd, or the round is void with no
+                # report. A wrong report is worse than no report.
+                assert_surface_cwd(workspace)
 
-            # b. task attempt -> blockage report
-            assert_claude_isolation(workspace)
-            attempt_prompt = self._load_prompt("claude_user.md", task=task_text,
-                                               round=n, mode="attempt")
-            raw = self.agents.claude(attempt_prompt)
-            report = parse_claude_attempt(raw)
+                # a. pre-registered prediction (Claude only, hidden from Codex)
+                assert_claude_isolation(workspace)
+                pred_prompt = self._load_prompt("claude_user.md", task=task_text,
+                                                round=n, mode="predict")
+                prediction = self.agents.claude(pred_prompt)
+                self._p("predictions", f"round_{n:03d}.md").write_text(
+                    prediction, encoding="utf-8")
 
-            # c. bandwidth filter
-            kept, dropped = self.filter_fn(report, level)
-            self._p("reports", f"round_{n:03d}.md").write_text(
-                yaml.safe_dump({"report": {**kept, "round": n}},
-                               allow_unicode=True, sort_keys=False),
-                encoding="utf-8")
-            if dropped:
-                self._p("reports", "dropped", f"round_{n:03d}.md").write_text(
-                    "\n".join(dropped) + "\n", encoding="utf-8")
+                # b. task attempt -> blockage report
+                assert_claude_isolation(workspace)
+                assert_surface_cwd(workspace)
+                attempt_prompt = self._load_prompt("claude_user.md", task=task_text,
+                                                   round=n, mode="attempt")
+                raw = self.agents.claude(attempt_prompt)
+                report = parse_claude_attempt(raw)
+
+                # c. bandwidth filter
+                kept, dropped = self.filter_fn(report, level)
+                self._p("reports", f"round_{n:03d}.md").write_text(
+                    yaml.safe_dump({"report": {**kept, "round": n}},
+                                   allow_unicode=True, sort_keys=False),
+                    encoding="utf-8")
+                if dropped:
+                    self._p("reports", "dropped", f"round_{n:03d}.md").write_text(
+                        "\n".join(dropped) + "\n", encoding="utf-8")
 
             # d. Codex build (all of reports/ is the only input)
             reports_text = "\n\n".join(
