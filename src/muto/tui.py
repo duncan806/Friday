@@ -177,36 +177,16 @@ def _add_data(root: Path, value: str):
 
 
 def _render_cycle(root: Path, state: dict):
-    _clear(); _header(root)
     rounds = state.get("rounds", [])
     status = state.get("status") or state.get("phase", "unknown")
-    curve = "".join("x" if r.get("void") else "#" if r.get("blocked") else "." for r in rounds)
-    print(f"\n+-- CYCLE -----------------------------------------------------------+")
-    print(f"| {CYAN}{SPIN[int(time.time()*8) % len(SPIN)]}{RESET} {status.replace('_', ' '):<62}|")
-    print(f"| round {state.get('round', 0):<4}  {_context_line(root):<54}|")
-    print(f"+-- CONVERGENCE -----------------------------------------------------+")
-    print(f"| {curve[-64:]:<65}|")
-    latest = rounds[-1] if rounds else {}
-    blocked, deviation = latest.get("blocked"), latest.get("deviation")
-    cells = {
-        "noise": "<" if blocked and not deviation else " ",
-        "progress": "<" if blocked and deviation else " ",
-        "toxic": "<" if blocked is False and deviation is False else " ",
-        "verdict": "<" if blocked is False and deviation else " ",
-    }
-    print(f"+-- QUADRANT ----------------------+-- ISOLATED ROLES ----------------+")
-    print(f"| blocked / no deviation {cells['noise']}         | CODEX  [builder]  src/        |")
-    print(f"| blocked / deviation    {cells['progress']}         |          x no direct channel x   |")
-    print(f"| clear   / no deviation {cells['toxic']}         | CLAUDE [user]     surface/    |")
-    print(f"| clear   / deviation    {cells['verdict']}         | reports/ is the only bridge   |")
-    print(f"+-- RECENT ROUNDS ---------------------------------------------------+")
-    for item in rounds[-8:]:
-        mark = "x" if item.get("void") else "*"
-        row = f" {mark} R{item.get('round', 0):03d}  {item.get('quadrant', '')}"
-        print(f"| {row:<65}|")
-    print(f"+-------------------------------------------------------------------+")
-    print(f"\n{DIM}[s] stop   [c] context   [q] detach{RESET}")
-
+    marker = SPIN[int(time.time() * 8) % len(SPIN)] if status in (
+        "ready", "starting", "running") else "*"
+    print(f"\n{ORANGE}{marker}{RESET} {status.replace('_', ' ')} | "
+          f"round {state.get('round', 0)} | {_context_line(root)}")
+    if rounds:
+        latest = rounds[-1]
+        print(f"  R{latest.get('round', 0):03d}  {latest.get('quadrant', '')}")
+    return
 
 def _key():
     if os.name == "nt":
@@ -218,8 +198,19 @@ def _key():
 
 
 def monitor(root: Path, stop_fn):
+    fingerprint = None
     while True:
-        state = _status(root); _render_cycle(root, state)
+        state = _status(root)
+        current = json.dumps({
+            "status": state.get("status"),
+            "round": state.get("round"),
+            "rounds": state.get("rounds", []),
+            "context": state.get("context", {}),
+            "message": state.get("message", ""),
+        }, sort_keys=True, ensure_ascii=False)
+        if current != fingerprint:
+            _render_cycle(root, state)
+            fingerprint = current
         status = state.get("status", "")
         if status in ("awaiting_verdict", "budget_exhausted", "aborted", "integrity_breach", "crashed"):
             input("\npress Enter to return "); return
@@ -228,7 +219,7 @@ def monitor(root: Path, stop_fn):
         elif key == "c":
             print("\n" + json.dumps(read_context(root), ensure_ascii=False, indent=2)); input("Enter ")
         elif key == "q": return
-        time.sleep(0.25)
+        time.sleep(0.1)
 
 
 def run(root: Path, checks_fn, start_fn, stop_fn) -> int:
