@@ -551,6 +551,16 @@ def _clean_cmd(cmd: str) -> str:
     return " ".join((m.group(1) if m else cmd).split())
 
 
+def _emit_reply(label: str, color: str, text: str) -> None:
+    """Print an agent reply cleanly: speaker, then Markdown-rendered body with
+    continuation lines aligned and blank lines truly blank (no ghost whitespace).
+    One visual grammar for friday/claude/codex."""
+    lines = _md((text or "").strip() or "(no answer)").split("\n")
+    print(f"  {color}{label:<6}{RESET}  {lines[0]}")
+    for ln in lines[1:]:
+        print(("          " + ln) if ln.strip() else "")
+
+
 def _render_codex_event(ev) -> None:
     """Show Codex's live activity — its reasoning, the commands it runs, output."""
     t, item = ev.get("type"), ev.get("item", {})
@@ -559,8 +569,7 @@ def _render_codex_event(ev) -> None:
         raw = item.get("text", "").strip()
         if not raw or raw.upper().startswith(("ESCALATE", "BUILD")):
             return  # control tokens are routing signals, not shown to the user
-        for i, ln in enumerate(_md(raw).splitlines() or [""]):
-            print((f"  {ICE}codex{RESET}  " if i == 0 else "         ") + ln)
+        _emit_reply("codex", ICE, raw)
     elif t == "item.started" and it == "command_execution":
         print(f"  {ICE}codex{RESET} {DIM}$ {_clean_cmd(item.get('command', ''))[:100]}{RESET}")
     elif t == "item.completed" and it == "command_execution":
@@ -623,28 +632,27 @@ def _agent_reply(root: Path, config: dict, prompt: str, *, label: str, color: st
     except Exception as exc:
         print(f"  {RED}{exc}{RESET}")
         return ""
-    lines = _md((text or "").strip() or "(no answer)").splitlines() or [""]
-    print(f"  {color}{label}{RESET}  {lines[0]}")
-    for ln in lines[1:]:
-        print(f"         {ln}")
+    _emit_reply(label, color, text)
     return text
 
 
 def _claude_reply(root: Path, config: dict, prompt: str) -> str:
     """Claude — the deep, free Inner voice (Opus). Reads files to ground judgment."""
     full = (prompt + "\n\n" + _CLAUDE_MIND +
-            "\n\nIf the question touches the code or project, read the relevant files first "
-            "(you have file tools) so your judgment is grounded, not guessed.")
+            "\n\nReply in the same language the user is using. If the question touches the code "
+            "or project, read the relevant files first (you have file tools) so your judgment is "
+            "grounded, not guessed.")
     return _agent_reply(root, config, full, label="claude", color=ORANGE)
 
 
 def _fast_reply(root: Path, config: dict, prompt: str) -> str:
     """Friday's fast, diligent Outer voice (Haiku). Reads files when the question
     is about the code, so answers are grounded rather than confabulated."""
-    full = (prompt + "\n\n(You are Friday's fast, diligent assistant. Answer directly and "
-            "helpfully — give your actual take. If the question is about the code or project, "
-            "READ the relevant files first (you have file tools) so the answer is grounded, not "
-            "guessed. Do NOT ask what to work on; just answer.)")
+    full = (prompt + "\n\n(You are Friday's fast, diligent assistant. Reply in the same language "
+            "the user is using, and match length to the question — a greeting gets one short "
+            "line, not a paragraph. Give your actual take. If the question is about the code or "
+            "project, READ the relevant files first (you have file tools) so the answer is "
+            "grounded, not guessed. Do NOT ask what to work on; just answer.)")
     return _agent_reply(root, config, full, label="friday", color=ICE, model=_HAIKU)
 
 
@@ -680,8 +688,8 @@ def _codex_reply(root: Path, config: dict, prompt: str) -> str:
     edits) live. Returns its final message."""
     from .providers import codex_stream
     full = prompt + ("\n\n(You are Codex, Friday's builder and technical layer. Read and edit "
-                     "files in this workspace to do what's asked — explain, fix, or build. Do "
-                     "the work now; don't ask what to work on.)")
+                     "files in this workspace to do what's asked — explain, fix, or build. Reply "
+                     "in the user's language. Do the work now; don't ask what to work on.)")
     try:
         return codex_stream(full, on_event=_render_codex_event, sandbox="workspace-write",
                             cwd=root, timeout=int(config.get("timeout_seconds", 600)))
