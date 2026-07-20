@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "friday"
 version = "0.1.0"
-description = "A terminal you hand a goal to: Claude PMs (read-only), Codex builds (no authority) — you watch them work"
+description = "A terminal you hand a goal to: Claude directs (read-only), Codex builds (no authority) — you watch them work"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

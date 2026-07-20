@@ -1,6 +1,6 @@
-"""friday CLI — launcher for the PM↔builder terminal.
+"""friday CLI — launcher for the decide-and-build terminal.
 
-  friday            open the terminal (default): Claude PMs, Codex builds
+  friday            open the terminal (default): Claude decides, Codex builds
   friday init       create a friday workspace in the current directory
   friday shortcut   create a desktop shortcut targeting this workspace
 """
@@ -17,9 +17,11 @@ MARKER = "config.yaml"
 
 DEFAULT_CONFIG = """\
 # friday
-round_budget: 30          # max PM↔Codex rounds per goal
+round_budget: 30          # max overseer reviews per goal (a runaway backstop)
 timeout_seconds: 600      # cut a stalled agent call (seconds)
+review_seconds: 25        # timer fallback for how often Claude reviews Codex
 codex_model: gpt-5.6-luna # fast model the builder runs on
+verify_command: ""        # command Claude may run to verify (e.g. "python -m pytest -q")
 """
 
 
@@ -51,7 +53,7 @@ def _auth_probe(cmd: list) -> bool:
             return False
         return subprocess.run([exe, *cmd[1:]], capture_output=True, text=True,
                               encoding="utf-8", errors="replace",
-                              timeout=180).returncode == 0
+                              timeout=30).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
 
@@ -179,7 +181,7 @@ def cmd_shortcut() -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="friday",
-        description="A terminal you hand a goal to: Claude PMs, Codex builds.")
+        description="A terminal you hand a goal to: Claude decides, Codex builds.")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("init", help="create a friday workspace here")
     sub.add_parser("shortcut", help="create a desktop shortcut")

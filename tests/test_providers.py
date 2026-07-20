@@ -45,6 +45,43 @@ def test_pm_decide_not_installed(monkeypatch, tmp_path):
         providers.pm_decide(tmp_path, {}, "g", "h", "l")
 
 
+# ── claude_review (overseer, verify-only, structured) ────────────────────────
+
+def test_claude_review_verifies_never_writes_and_parses(monkeypatch, tmp_path):
+    monkeypatch.setattr(providers.shutil, "which", lambda _: "claude")
+
+    def runner(cmd, **kw):
+        assert "--json-schema" in cmd
+        # verify-only allowlist: git tools + the project's test command, never write
+        assert any(a.startswith("Bash(git diff") for a in cmd)
+        assert any("pytest" in a for a in cmd)
+        assert "Write" not in cmd and "Edit" not in cmd and "Read" not in cmd
+
+        class R:
+            stdout = '{"structured_output":{"verdict":"correct","hard":true,"note":"add tests"}}'
+            stderr = ""
+            returncode = 0
+        return R()
+
+    v = providers.claude_review(tmp_path, "goal", "brief", "summary",
+                                "python -m pytest -q", runner=runner)
+    assert v["verdict"] == "correct" and v["hard"] is True and v["note"] == "add tests"
+
+
+def test_claude_review_defaults_hard_and_note(monkeypatch, tmp_path):
+    monkeypatch.setattr(providers.shutil, "which", lambda _: "claude")
+
+    def runner(cmd, **kw):
+        class R:
+            stdout = '{"structured_output":{"verdict":"continue"}}'
+            stderr = ""
+            returncode = 0
+        return R()
+
+    v = providers.claude_review(tmp_path, "g", "b", "s", runner=runner)
+    assert v["verdict"] == "continue" and v["hard"] is False and v["note"] == ""
+
+
 # ── codex_stream (Codex, sole writer, streamed activity) ─────────────────────
 
 class _FakeCodex:
@@ -79,3 +116,22 @@ def test_codex_stream_not_installed(monkeypatch):
     monkeypatch.setattr(providers.shutil, "which", lambda _: None)
     with pytest.raises(AdapterError):
         providers.codex_stream("x")
+
+
+# ── codex_run (pipeline worker: killable, never silent on failure) ───────────
+
+def test_codex_run_surfaces_worker_error_never_silence(monkeypatch):
+    # codex not installed → codex_stream raises → codex_run must emit worker_error, not ""
+    monkeypatch.setattr(providers.shutil, "which", lambda _: None)
+    events = []
+    out = providers.codex_run("brief", on_event=events.append)
+    assert out == ""
+    assert events and events[0]["type"] == "worker_error"
+    assert events[0]["item"]["message"]
+
+
+def test_codex_run_returns_final_on_success(monkeypatch):
+    monkeypatch.setattr(providers.shutil, "which", lambda _: "codex")
+    lines = ['{"type":"item.completed","item":{"type":"agent_message","text":"built it"}}']
+    out = providers.codex_run("brief", popen=lambda cmd, **kw: _FakeCodex(lines))
+    assert out == "built it"
