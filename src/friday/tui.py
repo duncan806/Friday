@@ -673,6 +673,17 @@ _BUILD_WORDS = ("build", "make", "create", "implement", "refactor",
                 "만들", "구현", "생성", "짜줘", "작성", "붙여")
 
 
+def _build_status(root: Path) -> None:
+    """A dim line while Codex builds in the background — so the fast conversation
+    (foreground) and the slow build (background) visibly run at the same time."""
+    if not (root / "friday.pid").exists():
+        return
+    st = _status(root)
+    status = (st.get("status") or "").replace("_", " ")
+    tail = f" · {status}" if status and status not in ("running", "starting", "cycle") else ""
+    print(f"  {ICE}codex{RESET} {DIM}· building in background · round {st.get('round', 0)}{tail}{RESET}")
+
+
 def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
     """Friday's core: shared conversation memory feeds both agents, and routing
     sends each turn to the right one — fast execution to Codex, judgment to
@@ -690,6 +701,7 @@ def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
                 f"this):\n{recent}\n\n")
 
     while True:
+        _build_status(root)          # Codex keeps building in the background
         try:
             text = input(f"\n  {DIM}›{RESET} {WHITE}").strip()
         except (EOFError, KeyboardInterrupt):
@@ -710,15 +722,13 @@ def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
         if "claude" in low or "클로드" in text:      # deep, free — the Inner voice (Opus)
             history.append(("claude", _claude_reply(root, config, ctx() + "Asked: " + text)))
             continue
-        if any(w in low for w in _BUILD_WORDS):       # execution → the build cycle
+        if any(w in low for w in _BUILD_WORDS):       # execution → background build cycle
             (root / "task" / "task.md").write_text(text.strip() + "\n", encoding="utf-8")
             _set_mode(root, "collaborate")
-            print(f"  {ORANGE}claude{RESET} {DIM}drafts →{RESET} {ICE}codex{RESET} "
-                  f"{DIM}builds — watch:{RESET}")
-            time.sleep(0.3)
-            if start_fn() == 0:
-                monitor(root, stop_fn)
-            history.append(("friday", "(build cycle: Claude drafted the order, Codex built)"))
+            if start_fn() == 0:                        # non-blocking: keeps running in back
+                print(f"  {ICE}codex{RESET} {DIM}is building in the background — keep talking. "
+                      f"{IVORY}/watch{DIM} to watch it, {IVORY}/stop{DIM} to halt.{RESET}")
+            history.append(("friday", "(Codex is building in the background; Claude drafts each round)"))
             continue
         # default: fast, diligent answer (Haiku) — the Outer voice
         history.append(("friday", _fast_reply(root, config, ctx() + "User: " + text)))
