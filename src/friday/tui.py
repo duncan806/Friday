@@ -95,8 +95,8 @@ def _short_path(root: Path) -> str:
 
 
 def _header(root: Path):
-    for line in _BANNER:
-        print(f"{YELLOW}{line}{RESET}")
+    for line in _BANNER:                     # "Fri" in Hermès orange, "Day" in ivory
+        print(f"{ORANGE}{line[:21]}{IVORY}{line[21:]}{RESET}")
     print(f"{DIM}   not knowing is the asset{RESET}")
 
 
@@ -568,6 +568,11 @@ def _render_codex_event(ev) -> None:
         if out:
             more = f"  …+{len(out) - 1}" if len(out) > 1 else ""
             print(f"       {DIM}{out[0][:88]}{more}{RESET}")
+    elif t == "item.started" and it and it not in ("agent_message", "reasoning"):
+        # file edits, patches, todos, etc. — fine-grained visibility for everything
+        detail = (item.get("path") or item.get("file") or item.get("title")
+                  or item.get("name") or "")
+        print(f"  {ICE}codex{RESET} {DIM}· {it.replace('_', ' ')} {str(detail)[:70]}{RESET}")
 
 
 def _codex_activity(root: Path, config: dict, prompt: str, model: str | None = None) -> str:
@@ -669,19 +674,20 @@ def _fast(root: Path, config: dict, prompt: str) -> str | None:
     return (result.get("text", "") or "").strip()
 
 
-_BUILD_WORDS = ("build", "make", "create", "implement", "refactor",
-                "만들", "구현", "생성", "짜줘", "작성", "붙여")
-
-
-def _build_status(root: Path) -> None:
-    """A dim line while Codex builds in the background — so the fast conversation
-    (foreground) and the slow build (background) visibly run at the same time."""
-    if not (root / "friday.pid").exists():
-        return
-    st = _status(root)
-    status = (st.get("status") or "").replace("_", " ")
-    tail = f" · {status}" if status and status not in ("running", "starting", "cycle") else ""
-    print(f"  {ICE}codex{RESET} {DIM}· building in background · round {st.get('round', 0)}{tail}{RESET}")
+def _codex_reply(root: Path, config: dict, prompt: str) -> str:
+    """Codex — the technical/builder voice, real-time. Reads and edits files in
+    the workspace to explain or build, showing every step (reads, commands,
+    edits) live. Returns its final message."""
+    from .providers import codex_stream
+    full = prompt + ("\n\n(You are Codex, Friday's builder and technical layer. Read and edit "
+                     "files in this workspace to do what's asked — explain, fix, or build. Do "
+                     "the work now; don't ask what to work on.)")
+    try:
+        return codex_stream(full, on_event=_render_codex_event, sandbox="workspace-write",
+                            cwd=root, timeout=int(config.get("timeout_seconds", 600)))
+    except Exception as exc:
+        print(f"  {RED}{exc}{RESET}")
+        return ""
 
 
 def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
@@ -701,7 +707,6 @@ def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
                 f"this):\n{recent}\n\n")
 
     while True:
-        _build_status(root)          # Codex keeps building in the background
         try:
             text = input(f"\n  {DIM}›{RESET} {WHITE}").strip()
         except (EOFError, KeyboardInterrupt):
@@ -719,18 +724,13 @@ def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
         history.append(("you", text))
 
         # ── routing ─────────────────────────────────────────────────────────
-        if "claude" in low or "클로드" in text:      # deep, free — the Inner voice (Opus)
+        if "claude" in low or "클로드" in text:      # deep, free judgment — Opus, real-time
             history.append(("claude", _claude_reply(root, config, ctx() + "Asked: " + text)))
             continue
-        if any(w in low for w in _BUILD_WORDS):       # execution → background build cycle
-            (root / "task" / "task.md").write_text(text.strip() + "\n", encoding="utf-8")
-            _set_mode(root, "collaborate")
-            if start_fn() == 0:                        # non-blocking: keeps running in back
-                print(f"  {ICE}codex{RESET} {DIM}is building in the background — keep talking. "
-                      f"{IVORY}/watch{DIM} to watch it, {IVORY}/stop{DIM} to halt.{RESET}")
-            history.append(("friday", "(Codex is building in the background; Claude drafts each round)"))
+        if "codex" in low or "코덱스" in text:        # technical / build — real-time, detailed
+            history.append(("codex", _codex_reply(root, config, ctx() + "User: " + text)))
             continue
-        # default: fast, diligent answer (Haiku) — the Outer voice
+        # everything else → the fast base voice (Haiku), grounded in the files
         history.append(("friday", _fast_reply(root, config, ctx() + "User: " + text)))
 
 
