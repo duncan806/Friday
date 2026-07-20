@@ -111,8 +111,8 @@ def loading(root: Path, checks_fn) -> bool:
         done.set()
 
     threading.Thread(target=work, daemon=True).start()
-    _clear(); _header(root)
-    print(f"\n{DIM}INITIALIZING{RESET}")
+    _clear()
+    print(f"{ORANGE}friday{RESET}  {DIM}initializing…{RESET}\n")
     printed = 0
     i = 0
     while not done.wait(0.08):
@@ -591,49 +591,56 @@ Never invoke a big concept as an endpoint — name the idea doing real work or d
 Do NOT print "Inner/Outer Monologue" labels or walk a visible checklist — that ritual is itself the failure. Let the depth live inside the answer. Concise when concision is honest, not when there's simply nothing compressed."""
 
 
-def _claude_reply(root: Path, config: dict, prompt: str) -> str:
-    """Summon Claude with a live streamed reply; return the full text."""
-    from .providers import claude_advisor_stream
-    full = prompt + "\n\n" + _CLAUDE_MIND
-    print(f"  {ORANGE}claude{RESET}  ", end="", flush=True)
-    buf: list = []
-
-    def on(t):
-        buf.append(t)
-        print(t, end="", flush=True)
-
-    try:
-        claude_advisor_stream(full, on_text=on, timeout=int(config.get("timeout_seconds", 120)))
-    except Exception as exc:
-        print(f"\n  {RED}{exc}{RESET}")
-    print()
-    return "".join(buf)
-
-
 _HAIKU = "claude-haiku-4-5-20251001"
 
 
-def _fast_reply(root: Path, config: dict, prompt: str) -> str:
-    """Friday's fast, diligent voice (Haiku): answers chat, questions, and
-    opinions directly and quickly — the Outer layer. Streams live."""
-    from .providers import claude_advisor_stream
-    full = prompt + ("\n\n(You are Friday's fast, diligent assistant. Answer directly, fully, "
-                     "and helpfully — give your actual take. Be quick. Do NOT ask what to work "
-                     "on and do NOT reply with a question; just answer earnestly.)")
-    print(f"  {ICE}friday{RESET}  ", end="", flush=True)
-    buf: list = []
+def _render_claude_event(ev, label: str, color: str) -> None:
+    """Show an agent's file-reading activity live (grounding made visible)."""
+    if ev.get("kind") != "tool_use":
+        return
+    name = str(ev.get("name", "")).lower()
+    inp = ev.get("input", {}) or {}
+    detail = (inp.get("file_path") or inp.get("path") or inp.get("pattern")
+              or inp.get("command") or inp.get("query") or "")
+    detail = " ".join(str(detail).split())[:70]
+    verb = {"read": "reads", "grep": "greps", "glob": "finds", "bash": "$"}.get(name, name)
+    print(f"  {color}{label}{RESET} {DIM}· {verb} {detail}{RESET}")
 
-    def on(t):
-        buf.append(t)
-        print(t, end="", flush=True)
 
+def _agent_reply(root: Path, config: dict, prompt: str, *, label: str, color: str,
+                 model: str | None = None) -> str:
+    """A grounded reply: the agent reads files (activity shown live), then its
+    answer is printed with Markdown rendered. Used for both friday and claude."""
+    from .providers import claude_stream
     try:
-        claude_advisor_stream(full, on_text=on, model=_HAIKU,
-                              timeout=int(config.get("timeout_seconds", 120)))
+        text = claude_stream(prompt, on_event=lambda ev: _render_claude_event(ev, label, color),
+                             model=model, cwd=root, timeout=int(config.get("timeout_seconds", 180)))
     except Exception as exc:
-        print(f"\n  {RED}{exc}{RESET}")
-    print()
-    return "".join(buf)
+        print(f"  {RED}{exc}{RESET}")
+        return ""
+    lines = _md((text or "").strip() or "(no answer)").splitlines() or [""]
+    print(f"  {color}{label}{RESET}  {lines[0]}")
+    for ln in lines[1:]:
+        print(f"         {ln}")
+    return text
+
+
+def _claude_reply(root: Path, config: dict, prompt: str) -> str:
+    """Claude — the deep, free Inner voice (Opus). Reads files to ground judgment."""
+    full = (prompt + "\n\n" + _CLAUDE_MIND +
+            "\n\nIf the question touches the code or project, read the relevant files first "
+            "(you have file tools) so your judgment is grounded, not guessed.")
+    return _agent_reply(root, config, full, label="claude", color=ORANGE)
+
+
+def _fast_reply(root: Path, config: dict, prompt: str) -> str:
+    """Friday's fast, diligent Outer voice (Haiku). Reads files when the question
+    is about the code, so answers are grounded rather than confabulated."""
+    full = (prompt + "\n\n(You are Friday's fast, diligent assistant. Answer directly and "
+            "helpfully — give your actual take. If the question is about the code or project, "
+            "READ the relevant files first (you have file tools) so the answer is grounded, not "
+            "guessed. Do NOT ask what to work on; just answer.)")
+    return _agent_reply(root, config, full, label="friday", color=ICE, model=_HAIKU)
 
 
 def _fast(root: Path, config: dict, prompt: str) -> str | None:

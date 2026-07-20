@@ -243,6 +243,69 @@ def codex_stream(prompt: str, *, on_event=None, sandbox: str = "read-only",
     return final
 
 
+def claude_stream(prompt: str, *, on_event=None, model: str | None = None,
+                  cwd: Path | None = None, timeout: int = 180,
+                  popen=subprocess.Popen) -> str:
+    """Run Claude with its tools available (bypassPermissions) so it can read
+    files to ground its answer, streaming activity via on_event(event) — tool_use
+    calls (Read/Grep/Bash…) like Claude Code shows. Returns the final answer text.
+    `cwd` is where it reads; `model` picks haiku (fast) or opus (deep)."""
+    exe = shutil.which("claude")
+    if not exe:
+        raise AdapterError("claude CLI is not installed or not on PATH")
+    cmd = [exe, "-p", prompt, "--permission-mode", "bypassPermissions",
+           "--output-format", "stream-json", "--include-partial-messages", "--verbose"]
+    if model:
+        cmd += ["--model", model]
+    try:
+        proc = popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                     encoding="utf-8", errors="replace", cwd=str(cwd) if cwd else None,
+                     stdin=subprocess.DEVNULL, bufsize=1)
+    except OSError as exc:
+        raise AdapterError(f"claude call failed: {exc}") from exc
+
+    seen, result_text, assistant_text = set(), "", ""
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            typ = ev.get("type")
+            if typ == "assistant":
+                for block in ev.get("message", {}).get("content", []):
+                    bt = block.get("type")
+                    if bt == "tool_use":
+                        key = block.get("id") or f"{block.get('name')}:{block.get('input')}"
+                        if key not in seen:
+                            seen.add(key)
+                            if on_event:
+                                on_event({"kind": "tool_use", "name": block.get("name", ""),
+                                          "input": block.get("input", {}) or {}})
+                    elif bt == "text":
+                        assistant_text = block.get("text", "")
+            elif typ == "result":
+                result_text = ev.get("result", "") or ""
+    finally:
+        try:
+            proc.wait(timeout=timeout)
+        except Exception:
+            proc.kill()
+
+    text = result_text or assistant_text
+    if not text and proc.returncode:
+        err = ""
+        try:
+            err = proc.stderr.read() if proc.stderr else ""
+        except Exception:
+            pass
+        raise AdapterError((err or "claude failed").strip()[:240] or "claude failed")
+    return text
+
+
 def exec_summary(root: Path) -> str:
     """A one-line, read-only summary of what GPT is doing, for the advisor's
     context (spec §5.3 / D4 — conversation sees execution state, read-only)."""
