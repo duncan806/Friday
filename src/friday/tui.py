@@ -551,37 +551,44 @@ def _clean_cmd(cmd: str) -> str:
     return " ".join((m.group(1) if m else cmd).split())
 
 
-def _emit_reply(label: str, color: str, text: str) -> None:
-    """Print an agent reply cleanly: speaker, then Markdown-rendered body with
-    continuation lines aligned and blank lines truly blank (no ghost whitespace).
-    One visual grammar for friday/claude/codex."""
-    lines = _md((text or "").strip() or "(no answer)").split("\n")
-    print(f"  {color}{label:<6}{RESET}  {lines[0]}")
-    for ln in lines[1:]:
-        print(("          " + ln) if ln.strip() else "")
+def _rule() -> None:
+    """A dim horizontal rule — separates one user turn from the next."""
+    width = min(shutil.get_terminal_size((80, 24)).columns, 76)
+    print(f"{DIM}{'─' * width}{RESET}")
+
+
+def _header_line(color: str, label: str, note: str = "") -> None:
+    """A speaker header: a colored dot, the name, an optional dim note."""
+    tail = f" {DIM}· {note}{RESET}" if note else ""
+    print(f"  {color}●{RESET} {color}{label}{RESET}{tail}")
+
+
+def _emit_body(text: str) -> None:
+    """Print a reply body under its header: Markdown-rendered, indented, blanks blank."""
+    for ln in _md((text or "").strip() or "(no answer)").split("\n"):
+        print(("    " + ln) if ln.strip() else "")
 
 
 def _render_codex_event(ev) -> None:
-    """Show Codex's live activity — its reasoning, the commands it runs, output."""
+    """Codex's live activity indented under its header — commands, output, edits."""
     t, item = ev.get("type"), ev.get("item", {})
     it = item.get("type")
     if t == "item.completed" and it == "agent_message":
         raw = item.get("text", "").strip()
         if not raw or raw.upper().startswith(("ESCALATE", "BUILD")):
-            return  # control tokens are routing signals, not shown to the user
-        _emit_reply("codex", ICE, raw)
+            return
+        _emit_body(raw)
     elif t == "item.started" and it == "command_execution":
-        print(f"  {ICE}codex{RESET} {DIM}$ {_clean_cmd(item.get('command', ''))[:100]}{RESET}")
+        print(f"    {DIM}$ {_clean_cmd(item.get('command', ''))[:96]}{RESET}")
     elif t == "item.completed" and it == "command_execution":
         out = (item.get("aggregated_output", "") or "").strip().splitlines()
         if out:
             more = f"  …+{len(out) - 1}" if len(out) > 1 else ""
-            print(f"       {DIM}{out[0][:88]}{more}{RESET}")
+            print(f"      {DIM}{out[0][:86]}{more}{RESET}")
     elif t == "item.started" and it and it not in ("agent_message", "reasoning"):
-        # file edits, patches, todos, etc. — fine-grained visibility for everything
         detail = (item.get("path") or item.get("file") or item.get("title")
                   or item.get("name") or "")
-        print(f"  {ICE}codex{RESET} {DIM}· {it.replace('_', ' ')} {str(detail)[:70]}{RESET}")
+        print(f"    {DIM}· {it.replace('_', ' ')} {str(detail)[:68]}{RESET}")
 
 
 def _codex_activity(root: Path, config: dict, prompt: str, model: str | None = None) -> str:
@@ -608,31 +615,31 @@ Do NOT print "Inner/Outer Monologue" labels or walk a visible checklist — that
 _HAIKU = "claude-haiku-4-5-20251001"
 
 
-def _render_claude_event(ev, label: str, color: str) -> None:
-    """Show an agent's file-reading activity live (grounding made visible)."""
+def _render_claude_event(ev, color: str = DIM) -> None:
+    """An agent's file-reading activity, indented under its header (grounding shown)."""
     if ev.get("kind") != "tool_use":
         return
     name = str(ev.get("name", "")).lower()
     inp = ev.get("input", {}) or {}
     detail = (inp.get("file_path") or inp.get("path") or inp.get("pattern")
               or inp.get("command") or inp.get("query") or "")
-    detail = " ".join(str(detail).split())[:70]
+    detail = " ".join(str(detail).split())[:68]
     verb = {"read": "reads", "grep": "greps", "glob": "finds", "bash": "$"}.get(name, name)
-    print(f"  {color}{label}{RESET} {DIM}· {verb} {detail}{RESET}")
+    print(f"    {DIM}· {verb} {detail}{RESET}")
 
 
 def _agent_reply(root: Path, config: dict, prompt: str, *, label: str, color: str,
                  model: str | None = None) -> str:
-    """A grounded reply: the agent reads files (activity shown live), then its
-    answer is printed with Markdown rendered. Used for both friday and claude."""
+    """A grounded reply: header, then file-reading activity, then the answer."""
     from .providers import claude_stream
+    _header_line(color, label)
     try:
-        text = claude_stream(prompt, on_event=lambda ev: _render_claude_event(ev, label, color),
+        text = claude_stream(prompt, on_event=lambda ev: _render_claude_event(ev, color),
                              model=model, cwd=root, timeout=int(config.get("timeout_seconds", 180)))
     except Exception as exc:
-        print(f"  {RED}{exc}{RESET}")
+        print(f"    {RED}{exc}{RESET}")
         return ""
-    _emit_reply(label, color, text)
+    _emit_body(text)
     return text
 
 
@@ -742,30 +749,19 @@ def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
         history.append(("friday", _fast_reply(root, config, ctx() + "User: " + text)))
 
 
-_PM_INSTRUCTIONS = (
-    "You are the PM. Codex is a fast builder with NO decision authority — it only executes the "
-    "one instruction you give it. You decide everything: what to do next, whether it's right, "
-    "and when it's done. Read the workspace files to check reality first. Then output ONE of:\n"
-    "- the next instruction for Codex: a direct imperative naming files and the exact change "
-    "(Codex acts only on direct imperatives, never on vague goals);\n"
-    "- 'DONE: <one-line summary>' if the goal is fully and verifiably met;\n"
-    "- 'ASK: <question>' only if you truly cannot proceed without the human.\n"
-    "Be terse — a line or two of reasoning is fine, but end with the instruction or DONE/ASK.")
-
-
-def _pm_decide(root: Path, config: dict, goal: str, history: str, last: str) -> str:
-    """Claude, the PM, reads the workspace and decides Codex's next instruction."""
-    prompt = (f"GOAL:\n{goal}\n\nWORK SO FAR:\n{history}\n\nCODEX'S LAST REPORT:\n{last}\n\n"
-              + _PM_INSTRUCTIONS)
-    return _agent_reply(root, config, prompt, label="claude", color=ORANGE)
-
-
 def _codex_do(root: Path, config: dict, instruction: str) -> str:
-    """Codex, the builder, executes the PM's instruction (no authority of its own)."""
-    prompt = ("Execute this instruction now in the workspace — read and edit files as needed. "
-              "Then report in 1-2 sentences what you did and the result. You have no authority to "
-              "change the scope; execute exactly this instruction:\n\n" + instruction)
-    return _codex_reply(root, config, prompt)
+    """Codex executes the PM's instruction (no authority of its own), shown live."""
+    from .providers import codex_stream
+    prompt = ("Execute this instruction now in the workspace — read and edit files as needed, "
+              "then report in 1-2 sentences what you did. You have no authority to change the "
+              "scope; execute exactly this:\n\n" + instruction)
+    _header_line(ICE, "codex")
+    try:
+        return codex_stream(prompt, on_event=_render_codex_event, sandbox="workspace-write",
+                            cwd=root, timeout=int(config.get("timeout_seconds", 600)))
+    except Exception as exc:
+        print(f"    {RED}{exc}{RESET}")
+        return ""
 
 
 def _steer_window(seconds: float = 1.4) -> str:
@@ -791,51 +787,74 @@ def _steer_window(seconds: float = 1.4) -> str:
 
 
 def _run_goal(root: Path, config: dict, goal: str, stop_fn) -> None:
-    """The core loop: Claude (PM) and Codex (builder) work together, round after
-    round, until the PM calls it done — with the human able to steer between rounds."""
-    history: list = [f"GOAL: {goal}"]
+    """The core loop. Each round the PM (Claude) decides — as structured output,
+    so the dispatch is reliable — one of: answer the human, instruct Codex,
+    finish, or ask. Codex executes instructions and never decides; the human
+    steers between rounds. A question just gets answered (no build loop)."""
+    from . import providers
+    history: list = [f"USER: {goal}"]
     last = "(nothing built yet)"
     budget = int(config.get("round_budget", 30))
     try:
         for n in range(1, budget + 1):
-            print(f"\n  {DIM}── round {n} ──{RESET}")
-            decision = (_pm_decide(root, config, goal, "\n".join(history[-16:]), last) or "").strip()
-            if decision.upper().startswith("DONE"):
-                print(f"  {ORANGE}✓ done{RESET}  {DIM}{decision.split(':', 1)[-1].strip()[:120]}{RESET}")
+            try:
+                d = providers.pm_decide(root, config, goal, "\n".join(history[-16:]), last)
+            except Exception as exc:
+                print(f"    {RED}{exc}{RESET}")
                 return
-            if decision.upper().startswith("ASK"):
-                q = decision.split(":", 1)[-1].strip()
+            action = d.get("action", "answer")
+            say = (d.get("say") or "").strip()
+            instruction = (d.get("instruction") or "").strip()
+
+            _header_line(ORANGE, "claude", "PM")
+            if say:
+                _emit_body(say)
+
+            if action == "answer":
+                return                       # a question, answered — back to the goal prompt
+            if action == "done":
+                print(f"  {ORANGE}✓ done{RESET}")
+                return
+            if action == "ask":
+                _rule()
                 try:
-                    ans = input(f"  {DIM}› {q}{RESET} {WHITE}").strip()
+                    ans = input(f"  {DIM}› you:{RESET} {WHITE}").strip()
                 finally:
                     print(RESET, end="", flush=True)
+                if not ans:
+                    return
                 history.append(f"human: {ans}")
                 continue
-            history.append(f"PM(claude): {decision[:400]}")
-            report = _codex_do(root, config, decision)
+            if not instruction:
+                return
+            history.append(f"PM: {instruction[:400]}")
+            print()
+            report = _codex_do(root, config, instruction)
             history.append(f"codex: {(report or '').strip()[:400]}")
             last = report or "(no report)"
             steer = _steer_window()
             if steer:
                 history.append(f"human: {steer}")
-        print(f"  {DIM}round budget reached — say more to continue.{RESET}")
+        print(f"  {DIM}round budget reached — give another goal to continue.{RESET}")
     except KeyboardInterrupt:
         print(f"\n  {DIM}stopped{RESET}")
 
 
 def _pm_session(root: Path, config: dict, stop_fn) -> int:
-    """Set a goal; watch Claude (PM) and Codex work it together, continuously."""
+    """Give a goal or ask a question; watch Claude (PM) and Codex work together.
+    A dim rule separates each of your turns."""
     _clear(); _header(root); _home(root, _status(root))
     while True:
-        print(f"\n  {DIM}Give a goal — {ORANGE}Claude{DIM} (PM) directs, {ICE}Codex{DIM} builds, "
-              f"they work until it's done. Empty line to quit.{RESET}")
+        print()
+        _rule()
         try:
-            goal = input(f"\n  {DIM}› goal:{RESET} {WHITE}").strip()
+            goal = input(f"  {DIM}›{RESET} {WHITE}").strip()
         except (EOFError, KeyboardInterrupt):
             print(RESET, end=""); return 0
         print(RESET, end="", flush=True)
         if not goal or goal.lower() in ("/quit", "/exit", "quit", "exit"):
             return 0
+        print()
         _run_goal(root, config, goal, stop_fn)
 
 

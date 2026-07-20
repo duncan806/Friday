@@ -190,6 +190,69 @@ def route_turn(text: str, context: str = "", *, workdir: Path | None = None,
     return payload
 
 
+_PM_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["action", "say", "instruction"],
+    "properties": {
+        "action": {"type": "string", "enum": ["answer", "instruct", "done", "ask"]},
+        "say": {"type": "string"},
+        "instruction": {"type": "string"},
+    },
+}
+
+_PM_PROMPT = """You are the PM directing Codex, a fast builder with NO decision authority — Codex only executes the exact instruction you give it, and cannot change scope. You decide everything.
+
+USER GOAL / MESSAGE:
+{{goal}}
+
+WORK SO FAR:
+{{history}}
+
+CODEX'S LAST REPORT:
+{{last}}
+
+Read the workspace files if you need to check reality. Then choose ONE action:
+- "answer": the user asked a question, or the goal is not a build/edit task — put your reply to the user in "say". Codex will NOT run. (Use this for capability questions like "can you review code?" — just answer.)
+- "instruct": building or editing files is needed — put brief reasoning in "say" and the exact imperative for Codex (name the files and the precise change) in "instruction".
+- "done": the goal is fully and verifiably met — put the summary in "say".
+- "ask": you genuinely cannot proceed without the human — put the question in "say".
+Reply in the user's language. Return {action, say, instruction} — leave "instruction" empty unless action is "instruct"."""
+
+
+def pm_decide(root: Path, config: dict, goal: str, history: str, last: str, *,
+              model: str | None = None, timeout: int = 180, runner=subprocess.run) -> dict:
+    """Claude, the PM, decides the next move as structured output — reliable
+    dispatch (answer | instruct Codex | done | ask), grounded by reading files."""
+    exe = shutil.which("claude")
+    if not exe:
+        raise AdapterError("claude CLI is not installed or not on PATH")
+    prompt = (_PM_PROMPT.replace("{{goal}}", goal).replace("{{history}}", history)
+              .replace("{{last}}", last))
+    cmd = [exe, "-p", prompt, "--permission-mode", "bypassPermissions",
+           "--output-format", "json", "--json-schema", json.dumps(_PM_SCHEMA)]
+    if model:
+        cmd += ["--model", model]
+    try:
+        r = runner(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                   timeout=timeout, cwd=str(root), stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired as exc:
+        raise AdapterError("PM decision timed out") from exc
+    except OSError as exc:
+        raise AdapterError(f"PM decision failed: {exc}") from exc
+    if r.returncode != 0:
+        raise AdapterError(((r.stderr or r.stdout) or "PM decision failed").strip()[:240])
+    try:
+        env = json.loads(r.stdout)
+        payload = env.get("structured_output")
+        if payload is None:
+            payload = json.loads(env.get("result", "{}"))
+    except (ValueError, TypeError) as exc:
+        raise AdapterError("PM returned unparseable output") from exc
+    if not isinstance(payload, dict) or "action" not in payload:
+        raise AdapterError("PM returned no action")
+    return payload
+
+
 def codex_stream(prompt: str, *, on_event=None, sandbox: str = "read-only",
                  cwd: Path | None = None, model: str | None = None, timeout: int = 180,
                  popen=subprocess.Popen) -> str:
