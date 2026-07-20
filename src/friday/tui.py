@@ -146,6 +146,37 @@ def _fmt_elapsed(seconds: float) -> str:
     return f"{s // 3600}h {(s % 3600) // 60:02d}m"
 
 
+_BRAILLE = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"   # smooth spinner while an agent is thinking
+
+
+def _spin_call(label: str, color: str, note: str, fn):
+    """Run a blocking model call in a thread while animating a live spinner —
+    so the real waiting process shows a heartbeat instead of freezing."""
+    result: dict = {}
+    done = threading.Event()
+
+    def work():
+        try:
+            result["v"] = fn()
+        except Exception as exc:                # noqa: BLE001 — re-raised below
+            result["e"] = exc
+        done.set()
+
+    threading.Thread(target=work, daemon=True).start()
+    i = 0
+    start = time.monotonic()
+    while not done.wait(0.09):
+        frame = _BRAILLE[i % len(_BRAILLE)]
+        el = _fmt_elapsed(time.monotonic() - start)
+        print(f"\r  {color}●{RESET} {color}{label}{RESET} {DIM}· {note} {frame} {el}{RESET}   ",
+              end="", flush=True)
+        i += 1
+    print("\r" + " " * 64 + "\r", end="", flush=True)
+    if "e" in result:
+        raise result["e"]
+    return result.get("v")
+
+
 def route_with_loading(root: Path, text: str, status: str, providers):
     result, done = {}, threading.Event()
 
@@ -798,7 +829,9 @@ def _run_goal(root: Path, config: dict, goal: str, stop_fn) -> None:
     try:
         for n in range(1, budget + 1):
             try:
-                d = providers.pm_decide(root, config, goal, "\n".join(history[-16:]), last)
+                d = _spin_call("claude", ORANGE, "PM · thinking",
+                               lambda: providers.pm_decide(
+                                   root, config, goal, "\n".join(history[-16:]), last))
             except Exception as exc:
                 print(f"    {RED}{exc}{RESET}")
                 return
