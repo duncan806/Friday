@@ -11,13 +11,17 @@ is the slow judgment.
 ## Why this shape
 
 Every other multi-agent tool coordinates interchangeable agents by prompt.
-Friday's one rule is different and enforced in code: **knowledge is shared, but
-authority is not.** Both agents see the whole conversation; only the slow judge
-(Claude) is allowed to decide. The fast builder (Codex) is tireless and capable,
-but it cannot rule on whether the work is *right* — that stays with the PM, and
-ultimately with you. "Not knowing is the asset" means the executor is deliberately
-kept from judging its own output, so plausible-but-wrong work gets caught instead
-of shipped.
+Friday's one rule is different and **enforced by the tools each agent is given**:
+
+> **Claude cannot write. Codex cannot decide.**
+
+Claude runs with read-only tools — it reads the code to ground its judgment, but
+it physically cannot edit a file. Codex is the only hand that writes, and it only
+ever executes the PM's exact instruction; it never sees the goal and has no
+authority over scope. Each agent is deliberately deprived of one power. "Not
+knowing is the asset" means the executor is kept from judging its own output, and
+the judge is kept from quietly doing the work — so plausible-but-wrong work gets
+caught instead of shipped.
 
 ## Install
 

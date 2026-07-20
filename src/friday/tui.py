@@ -123,7 +123,7 @@ def loading(root: Path, checks_fn) -> bool:
             if check.get("hint"):
                 print(f"       {DIM}{check['hint']}{RESET}")
             printed += 1
-        print(f"\r  {ORANGE}{SPIN[i % len(SPIN)]}{RESET} verifying local environment", end="", flush=True)
+        print(f"\r  {ORANGE}{_BRAILLE[i % len(_BRAILLE)]}{RESET} verifying local environment", end="", flush=True)
         i += 1
     while printed < len(checks):
         check = checks[printed]
@@ -781,18 +781,45 @@ def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
 
 
 def _codex_do(root: Path, config: dict, instruction: str) -> str:
-    """Codex executes the PM's instruction (no authority of its own), shown live."""
+    """Codex executes the PM's instruction — it cannot decide anything, only do
+    exactly what it's told. A spinner runs until its first step, then the real
+    work (commands, edits, output) streams live beneath it."""
     from .providers import codex_stream
     prompt = ("Execute this instruction now in the workspace — read and edit files as needed, "
-              "then report in 1-2 sentences what you did. You have no authority to change the "
-              "scope; execute exactly this:\n\n" + instruction)
+              "then report in 1-2 sentences what you did. You have no authority to decide, judge, "
+              "or change the scope; do exactly this:\n\n" + instruction)
     _header_line(ICE, "codex")
-    try:
-        return codex_stream(prompt, on_event=_render_codex_event, sandbox="workspace-write",
-                            cwd=root, timeout=int(config.get("timeout_seconds", 600)))
-    except Exception as exc:
-        print(f"    {RED}{exc}{RESET}")
+    first, done, result = threading.Event(), threading.Event(), {}
+    lock = threading.Lock()
+
+    def on_event(ev):
+        first.set()
+        with lock:
+            _render_codex_event(ev)
+
+    def work():
+        try:
+            result["v"] = codex_stream(prompt, on_event=on_event, sandbox="workspace-write",
+                                       cwd=root, timeout=int(config.get("timeout_seconds", 600)))
+        except Exception as exc:
+            result["e"] = exc
+        done.set()
+
+    threading.Thread(target=work, daemon=True).start()
+    i, start = 0, time.monotonic()
+    while not first.is_set() and not done.is_set():
+        with lock:
+            print(f"\r    {DIM}{_BRAILLE[i % len(_BRAILLE)]} working "
+                  f"{_fmt_elapsed(time.monotonic() - start)}{RESET}   ", end="", flush=True)
+        i += 1
+        time.sleep(0.09)
+    with lock:
+        print("\r" + " " * 40 + "\r", end="", flush=True)
+    done.wait()
+    if "e" in result:
+        print(f"    {RED}{result['e']}{RESET}")
         return ""
+    return result.get("v", "")
 
 
 def _steer_window(seconds: float = 1.4) -> str:
@@ -836,12 +863,11 @@ def _run_goal(root: Path, config: dict, goal: str, stop_fn) -> None:
                 print(f"    {RED}{exc}{RESET}")
                 return
             action = d.get("action", "answer")
-            say = (d.get("say") or "").strip()
-            instruction = (d.get("instruction") or "").strip()
+            message = (d.get("message") or "").strip()
 
-            _header_line(ORANGE, "claude", "PM")
-            if say:
-                _emit_body(say)
+            _header_line(ORANGE, "claude")
+            if message:
+                _emit_body(message)
 
             if action == "answer":
                 return                       # a question, answered — back to the goal prompt
@@ -858,11 +884,11 @@ def _run_goal(root: Path, config: dict, goal: str, stop_fn) -> None:
                     return
                 history.append(f"human: {ans}")
                 continue
-            if not instruction:
+            if not message:
                 return
-            history.append(f"PM: {instruction[:400]}")
+            history.append(f"PM: {message[:400]}")
             print()
-            report = _codex_do(root, config, instruction)
+            report = _codex_do(root, config, message)
             history.append(f"codex: {(report or '').strip()[:400]}")
             last = report or "(no report)"
             steer = _steer_window()

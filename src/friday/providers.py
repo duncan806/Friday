@@ -47,7 +47,9 @@ def claude_advisor_stream(prompt, *, on_text=None, model=None, timeout=180, cwd=
     exe = shutil.which("claude")
     if not exe:
         raise AdapterError("claude CLI is not installed or not on PATH")
+    # Claude cannot write — read-only tools only (it grounds by reading, never edits).
     cmd = [exe, "-p", prompt, "--permission-mode", "bypassPermissions",
+           "--allowedTools", "Read", "Grep", "Glob",
            "--output-format", "stream-json", "--include-partial-messages", "--verbose"]
     if model:
         cmd += ["--model", model]
@@ -192,15 +194,14 @@ def route_turn(text: str, context: str = "", *, workdir: Path | None = None,
 
 _PM_SCHEMA = {
     "type": "object", "additionalProperties": False,
-    "required": ["action", "say", "instruction"],
+    "required": ["action", "message"],
     "properties": {
         "action": {"type": "string", "enum": ["answer", "instruct", "done", "ask"]},
-        "say": {"type": "string"},
-        "instruction": {"type": "string"},
+        "message": {"type": "string"},
     },
 }
 
-_PM_PROMPT = """You are the PM directing Codex, a fast builder with NO decision authority — Codex only executes the exact instruction you give it, and cannot change scope. You decide everything.
+_PM_PROMPT = """You are the PM directing Codex, a fast builder with NO decision authority and NO ability to see the goal — Codex only executes the exact text you put in "message", verbatim. You cannot write files yourself (you are read-only); Codex is the only hand that edits. You decide everything.
 
 USER GOAL / MESSAGE:
 {{goal}}
@@ -211,12 +212,12 @@ WORK SO FAR:
 CODEX'S LAST REPORT:
 {{last}}
 
-Read the workspace files if you need to check reality. Then choose ONE action:
-- "answer": the user asked a question, or the goal is not a build/edit task — put your reply to the user in "say". Codex will NOT run. (Use this for capability questions like "can you review code?" — just answer.)
-- "instruct": building or editing files is needed — put brief reasoning in "say" and the exact imperative for Codex (name the files and the precise change) in "instruction".
-- "done": the goal is fully and verifiably met — put the summary in "say".
-- "ask": you genuinely cannot proceed without the human — put the question in "say".
-Reply in the user's language. Return {action, say, instruction} — leave "instruction" empty unless action is "instruct"."""
+Read the workspace files (Read/Grep/Glob) to check reality. Then choose ONE action and put ALL of the content in "message":
+- "answer": the user asked a question, or it's not a build/edit task — "message" is your reply to the user. Codex will NOT run. (Use this for capability questions like "can you review code?" — just answer.)
+- "instruct": building or editing is needed — "message" is the COMPLETE, self-contained instruction handed to Codex verbatim: name the files and the exact change/build. It must stand alone (Codex never sees the goal or your reasoning — only this text). Do NOT describe what you instructed; write the instruction itself.
+- "done": the goal is fully and verifiably met — "message" is the summary.
+- "ask": you genuinely cannot proceed without the human — "message" is the question.
+Reply in the user's language. Return {action, message}."""
 
 
 def pm_decide(root: Path, config: dict, goal: str, history: str, last: str, *,
@@ -228,7 +229,10 @@ def pm_decide(root: Path, config: dict, goal: str, history: str, last: str, *,
         raise AdapterError("claude CLI is not installed or not on PATH")
     prompt = (_PM_PROMPT.replace("{{goal}}", goal).replace("{{history}}", history)
               .replace("{{last}}", last))
+    # Claude cannot write — read-only tools only. It reads to ground its decision,
+    # but the builder (Codex) is the sole hand that touches files.
     cmd = [exe, "-p", prompt, "--permission-mode", "bypassPermissions",
+           "--allowedTools", "Read", "Grep", "Glob",
            "--output-format", "json", "--json-schema", json.dumps(_PM_SCHEMA)]
     if model:
         cmd += ["--model", model]
@@ -316,7 +320,9 @@ def claude_stream(prompt: str, *, on_event=None, model: str | None = None,
     exe = shutil.which("claude")
     if not exe:
         raise AdapterError("claude CLI is not installed or not on PATH")
+    # Claude cannot write — read-only tools only (it grounds by reading, never edits).
     cmd = [exe, "-p", prompt, "--permission-mode", "bypassPermissions",
+           "--allowedTools", "Read", "Grep", "Glob",
            "--output-format", "stream-json", "--include-partial-messages", "--verbose"]
     if model:
         cmd += ["--model", model]
