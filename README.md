@@ -89,10 +89,9 @@ asks; an empty line at the goal prompt quits.
 - Codex runs each build in a **fresh session** (`--ephemeral`) so stale context
   never leaks between rounds.
 
-The package also carries the original **validation system** (enforced information
-asymmetry between two blind agents) as a mode; see
-[`docs/design-gpt-claude-dialogue.md`](docs/design-gpt-claude-dialogue.md) and
-[`docs/implementation-spec.md`](docs/implementation-spec.md) for the full design.
+`docs/` keeps the earlier design explorations (an enforced information-asymmetry
+validation system) as history — that machinery has been retired in favor of the
+PM↔builder loop above.
 
 ## Develop
 

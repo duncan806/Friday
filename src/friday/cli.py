@@ -1,67 +1,26 @@
-"""friday CLI—the launcher, cross-platform. (spec §9 + the screen-first flow)
+"""friday CLI — launcher for the PM↔builder terminal.
 
-Commands:
-  friday          home (default): open the dashboard as a standalone app window,
-                stream POST checks into status.js, then start the cycle
-  friday init     create a cycle workspace in the current directory
-                (workspace/, task/, reports/...—code and data separated)
-  friday doctor   POST checks only (claude/codex/auth), terminal output
-  friday run      start the cycle
-  friday stop     drop stop.flag (the loop halts before the next round)
-  friday shortcut create a desktop shortcut targeting this workspace
-
-The package (code) lives in site-packages; cycle data lives wherever the
-user ran `friday init`. Every command except doctor operates on the workspace
-in the current directory.
+  friday            open the terminal (default): Claude PMs, Codex builds
+  friday init       create a friday workspace in the current directory
+  friday shortcut   create a desktop shortcut targeting this workspace
 """
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
 import sys
-import webbrowser
 from importlib import resources
 from pathlib import Path
-
-import yaml
-
-from . import gitutil
-from .dashboard_gen import generate, write_status
-from .orchestrator import CycleState, Orchestrator
 
 MARKER = "config.yaml"
 
 DEFAULT_CONFIG = """\
-# friday config—spec §2, §9
-mode: validate            # validate (information asymmetry) | collaborate (role asymmetry: human⇄Claude dialogue, GPT works)
-bandwidth_level: 1        # bandwidth dial: 1 (action/where only) | 2 (expected allowed). Change per cycle only.
-round_budget: 30          # overnight budget. Cycle ends when exhausted.
-call_budget: 0            # hard ceiling on total model calls per cycle (0 = off)
-auth_mode: subscription   # subscription | api_key (ANTHROPIC_API_KEY / OPENAI_API_KEY)
-timeout_seconds: 600      # cut stalled calls early; total cycle budget stays large
-context_budget_chars: 60000
-context_recent_reports: 6
-intent_providers: [codex, claude]  # ordered control-plane failover
-window: true              # open the dashboard as a standalone app window (Chrome/Edge --app); false = default browser tab
-
-# collaborate mode (all 0 = off → behavior identical to validate baseline)
-dialogue_turns: 0         # A안 round-trip Codex↔Claude cap per round
-claude_checkin_every: 0   # consult Claude (insight) every N rounds
-claude_on_build_fail: 0   # consult Claude after N consecutive build failures
-convo_budget_chars: 40000 # human⇄Claude conversation context budget
-convo_recent_turns: 12    # recent turns kept verbatim before summarizing
+# friday
+round_budget: 30          # max PM↔Codex rounds per goal
+timeout_seconds: 600      # cut a stalled agent call (seconds)
+codex_model: gpt-5.6-luna # fast model the builder runs on
 """
-
-WINDOW_SIZE = (1024, 768)
-
-WORKSPACE_DIRS = [
-    "workspace/src", "workspace/surface", "task", "reports/dropped",
-    "predictions", "verdicts", "dashboard", "prompts", "github",
-    # collaborate + round-trip surfaces
-    "questions", "answers", "directives", "convo", "flags",
-]
 
 
 def find_root() -> Path | None:
@@ -83,95 +42,14 @@ def require_root() -> Path:
     return root
 
 
-def load_config(root: Path) -> dict:
-    try:
-        return yaml.safe_load((root / MARKER).read_text(encoding="utf-8")) or {}
-    except OSError:
-        return {}
-
-
-# ── standalone app window (Chrome/Edge --app) ───────────────────────────────
-
-def find_browser() -> Path | None:
-    """Locate a Chromium-family browser that supports --app windows."""
-    candidates = []
-    if os.name == "nt":
-        bases = [os.environ.get("PROGRAMFILES", ""),
-                 os.environ.get("PROGRAMFILES(X86)", ""),
-                 os.environ.get("LOCALAPPDATA", "")]
-        rel = [r"Google\Chrome\Application\chrome.exe",
-               r"Microsoft\Edge\Application\msedge.exe",
-               r"Chromium\Application\chrome.exe",
-               r"BraveSoftware\Brave-Browser\Application\brave.exe"]
-        for base in bases:
-            for r in rel:
-                if base:
-                    candidates.append(Path(base) / r)
-        exes = ("chrome", "msedge", "chromium", "brave")
-    else:
-        exes = ("google-chrome", "google-chrome-stable", "chromium",
-                "chromium-browser", "microsoft-edge", "brave-browser")
-        candidates += [Path(p) for p in (
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium")]
-    for exe in exes:
-        found = shutil.which(exe)
-        if found:
-            candidates.append(Path(found))
-    for c in candidates:
-        if c.is_file():
-            return c
-    return None
-
-
-def open_app_window(browser: Path, url: str, size=WINDOW_SIZE) -> bool:
-    """Launch a chrome-tabless app window; detached, non-blocking."""
-    try:
-        subprocess.Popen(
-            [str(browser), f"--app={url}",
-             f"--window-size={size[0]},{size[1]}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except OSError:
-        return False
-
-
-def launch_dashboard(root: Path, window: bool) -> str:
-    """Open the dashboard. Standalone app window if possible, else a tab."""
-    url = (root / "dashboard" / "index.html").resolve().as_uri()
-    if window:
-        browser = find_browser()
-        if browser and open_app_window(browser, url):
-            return "app"
-        print("  (no Chrome/Edge found—opening in the default browser)")
-    webbrowser.open(url)
-    return "tab"
-
-
-def launch_control_ui(root: Path, window: bool, port: int = 8765) -> str:
-    """Launch the persistent local bridge that turns screen actions into files."""
-    subprocess.Popen([sys.executable, "-m", "friday", "--serve", "--port", str(port)],
-                     cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL,
-                     creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
-                     start_new_session=(os.name != "nt"))
-    url = f"http://127.0.0.1:{port}/"
-    browser = find_browser() if window else None
-    if browser and open_app_window(browser, url):
-        return "app"
-    webbrowser.open(url)
-    return "tab"
-
-
-# ── POST checks ────────────────────────────────────────────────────────────
+# ── environment checks ───────────────────────────────────────────────────────
 
 def _auth_probe(cmd: list) -> bool:
     try:
-        executable = shutil.which(cmd[0])
-        if not executable:
+        exe = shutil.which(cmd[0])
+        if not exe:
             return False
-        return subprocess.run([executable, *cmd[1:]], capture_output=True, text=True,
+        return subprocess.run([exe, *cmd[1:]], capture_output=True, text=True,
                               encoding="utf-8", errors="replace",
                               timeout=180).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -179,31 +57,18 @@ def _auth_probe(cmd: list) -> bool:
 
 
 def run_checks(root: Path | None, on_update=None) -> tuple[list, bool]:
-    """Run the POST checks in order, calling on_update(checks) after each.
-
-    Returns (checks, all_ok). A check failure stops the sequence—later
-    checks stay unreported, matching BIOS POST behavior.
-    """
+    """Check the two CLIs Friday drives are installed and signed in. A failure
+    stops the sequence (BIOS-POST style)."""
     plan = [
         ("CLAUDE CLI", lambda: shutil.which("claude") is not None,
          "install it: see https://claude.com/claude-code"),
         ("CODEX CLI", lambda: shutil.which("codex") is not None,
          "install it: npm install -g @openai/codex"),
-        ("CLAUDE AUTH",
-         lambda: _auth_probe(["claude", "auth", "status"]),
-         "run claude once and complete the browser login"),
-        ("CODEX AUTH",
-         lambda: _auth_probe(["codex", "login", "status"]),
+        ("CLAUDE AUTH", lambda: _auth_probe(["claude", "auth", "status"]),
+         "run claude once and complete the login"),
+        ("CODEX AUTH", lambda: _auth_probe(["codex", "login", "status"]),
          "run codex login"),
     ]
-    if root is not None:
-        plan.append(("WORKSPACE GIT",
-                     lambda: gitutil.is_repo(root / "workspace"),
-                     "run: friday init  (workspace/ must be a git repo so Codex can commit per-round diffs)"))
-        plan.append(("TASK FILE",
-                     lambda: (root / "task" / "task.md").is_file(),
-                     "write task/task.md first (a template was created by friday init)"))
-
     checks = []
     for name, probe, hint in plan:
         ok = probe()
@@ -216,61 +81,18 @@ def run_checks(root: Path | None, on_update=None) -> tuple[list, bool]:
     return checks, True
 
 
-def _print_post(checks) -> None:
-    line = checks[-1]
-    label = f"CHECKING {line['name']} ".ljust(34, ".")
-    state = " OK " if line["state"] == "ok" else "FAIL"
-    print(f"{label} [{state}]")
-    if line["hint"]:
-        print(f"  -> {line['hint']}")
-
-
-# ── commands ───────────────────────────────────────────────────────────────
+# ── commands ─────────────────────────────────────────────────────────────────
 
 def cmd_init() -> int:
     root = Path.cwd()
-    for d in WORKSPACE_DIRS:
-        (root / d).mkdir(parents=True, exist_ok=True)
-    # workspace/src and workspace/surface must exist and be git-tracked so
-    # Codex has a place to build and the round-0 baseline is complete.
-    for sub in ("src", "surface"):
-        keep = root / "workspace" / sub / ".gitkeep"
-        if not keep.is_file():
-            keep.write_text("", encoding="utf-8")
     if not (root / MARKER).is_file():
         (root / MARKER).write_text(DEFAULT_CONFIG, encoding="utf-8")
-    for name in ("claude_user.md", "codex_builder.md"):
-        target = root / "prompts" / name
-        if not target.is_file():
-            target.write_text(
-                resources.files("friday").joinpath("data/prompts", name)
-                .read_text(encoding="utf-8"), encoding="utf-8")
-    task = root / "task" / "task.md"
-    if not task.is_file():
-        task.write_text(
-            resources.files("friday").joinpath("data/task_template.md")
-            .read_text(encoding="utf-8"), encoding="utf-8")
-    # workspace/ becomes its own git repo so Codex can run and leave
-    # per-round diff history (spec §7).
-    if not gitutil.init_repo(root / "workspace"):
-        print("  warning: git not found—workspace/ is not a repo; "
-              "Codex will refuse to build until git is installed and "
-              "you re-run friday init.")
-    generate(CycleState(), root)
-    write_status(root, "boot")
-    print(f"friday workspace initialized in {root}")
-    print("Next: write task/task.md, then run: friday")
+    print(f"friday ready in {root}")
+    print("Run: friday")
     return 0
 
 
-def cmd_doctor() -> int:
-    root = find_root()
-    checks, ok = run_checks(root, on_update=_print_post)
-    print("ALL CHECKS PASSED." if ok else "BOOT HALTED.")
-    return 0 if ok else 1
-
-
-def cmd_home(window: bool | None = None) -> int:
+def cmd_home() -> int:
     root = find_root()
     if root is None:
         target = default_workspace_root()
@@ -278,119 +100,17 @@ def cmd_home(window: bool | None = None) -> int:
         os.chdir(target)
         cmd_init()
         root = require_root()
-
     from .tui import run as run_tui
 
-    def checks_for_tui(check_root, on_update=None):
-        def publish(checks):
-            write_status(root, "boot", checks=checks,
-                         task_present=(root / "task" / "task.md").is_file())
-            if on_update:
-                on_update(checks)
-        checks, ok = run_checks(check_root, on_update=publish)
-        write_status(root, "ready" if ok else "failed", checks=checks,
-                     task_present=(root / "task" / "task.md").is_file())
-        return checks, ok
-
-    write_status(root, "boot")
-    return run_tui(root, checks_for_tui,
-                   lambda: cmd_run(attach=False), cmd_stop)
-
-
-def notify_os(title: str, message: str) -> None:
-    """Best-effort OS notification; its failure never stops the cycle."""
-    try:
-        if os.name == "nt":
-            safe_title = title.replace("'", "''")
-            safe_message = message.replace("'", "''")
-            script = ("Add-Type -AssemblyName System.Windows.Forms;"
-                      f"[System.Windows.Forms.MessageBox]::Show('{safe_message}','{safe_title}')|Out-Null")
-            subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden",
-                              "-Command", script], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["osascript", "-e",
-                              f'display notification "{message}" with title "{title}"'],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        elif shutil.which("notify-send"):
-            subprocess.Popen(["notify-send", title, message], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-    except OSError:
-        pass
-
-
-def _worker(root: Path) -> int:
-    from .bandwidth_filter import apply_filter
-    pid_path = root / "friday.pid"
-    pid_path.write_text(str(os.getpid()), encoding="ascii")
-    try:
-        orch = Orchestrator(root=root, filter_fn=apply_filter,
-                            dashboard_fn=generate, notify_fn=notify_os)
-        state = orch.run_cycle()
-        print(f"cycle finished: {state.status}", flush=True)
+    def _noop(*_a, **_k):
         return 0
-    except Exception as exc:
-        write_status(root, "cycle", status="crashed", message=str(exc))
-        notify_os("FRIDAY cycle crashed", str(exc))
-        with open(root / "reports" / "orchestrator.log", "a", encoding="utf-8") as log:
-            log.write(f"cycle crash: {type(exc).__name__}: {exc}\n")
-        return 1
-    finally:
-        pid_path.unlink(missing_ok=True)
+
+    return run_tui(root, run_checks, _noop, _noop)
 
 
-def cmd_run(attach: bool = False) -> int:
-    root = require_root()
-    if not (root / "task" / "task.md").is_file():
-        print("task/task.md missing. Plant the task first.", file=sys.stderr)
-        return 1
-    if attach:
-        return _worker(root)
-    log_path = root / "reports" / "worker.log"
-    log = open(log_path, "a", encoding="utf-8")
-    kwargs = {"cwd": root, "stdin": subprocess.DEVNULL, "stdout": log,
-              "stderr": subprocess.STDOUT}
-    if os.name == "nt":
-        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    else:
-        kwargs["start_new_session"] = True
-    proc = subprocess.Popen([sys.executable, "-m", "friday", "run", "--attach"], **kwargs)
-    log.close()
-    try:
-        previous = json.loads((root / "status.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        previous = {}
-    write_status(root, "cycle", status="starting", message=f"worker pid {proc.pid}",
-                 round_no=int(previous.get("round", 0)), rounds=previous.get("rounds", []),
-                 task_present=True)
-    print(f"friday running in background (pid {proc.pid})")
-    return 0
-
-
-def cmd_status() -> int:
-    root = require_root()
-    try:
-        state = json.loads((root / "status.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        print("unknown | no status.json")
-        return 1
-    summary = (f"{state.get('status') or state.get('phase', 'unknown')} | "
-               f"round {state.get('round', 0)} | {state.get('message', '')}")
-    print(summary.rstrip(" |"))
-    return 0
-
-
-def cmd_stop() -> int:
-    root = require_root()
-    (root / "stop.flag").write_text("stop", encoding="utf-8")
-    print("stop.flag written—the cycle halts before the next round.")
-    return 0
-
-
-# ── desktop shortcut ────────────────────────────────────────────────────────
+# ── desktop shortcut ─────────────────────────────────────────────────────────
 
 def _install_icon(root: Path) -> Path:
-    """Copy the packaged app icon into the workspace for the shortcut."""
     name, res = ("friday.ico", "data/friday.ico") if os.name == "nt" \
         else ("friday.png", "data/favicon.png")
     dst = root / name
@@ -399,11 +119,9 @@ def _install_icon(root: Path) -> Path:
 
 
 def _shortcut_windows(root: Path, icon: Path) -> int:
-    # Prefer the no-console entry so the shortcut opens just the app window.
     target = shutil.which("fridayw") or shutil.which("friday")
     if not target:
-        print("friday executable not found on PATH; install friday first.",
-              file=sys.stderr)
+        print("friday executable not found on PATH; install friday first.", file=sys.stderr)
         return 1
     ps = (
         "$d=[Environment]::GetFolderPath('Desktop');"
@@ -412,7 +130,7 @@ def _shortcut_windows(root: Path, icon: Path) -> int:
         f"$s.TargetPath='{target}';"
         f"$s.WorkingDirectory='{root}';"
         f"$s.IconLocation='{icon}';"
-        "$s.Description='friday validation cycle';"
+        "$s.Description='friday';"
         "$s.Save()"
     )
     r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
@@ -425,16 +143,8 @@ def _shortcut_windows(root: Path, icon: Path) -> int:
 
 
 def _shortcut_linux(root: Path, icon: Path) -> int:
-    entry = (
-        "[Desktop Entry]\n"
-        "Type=Application\n"
-        "Name=FRIDAY\n"
-        "Comment=friday validation cycle\n"
-        "Exec=friday\n"
-        f"Path={root}\n"
-        f"Icon={icon}\n"
-        "Terminal=true\n"
-    )
+    entry = ("[Desktop Entry]\nType=Application\nName=FRIDAY\nComment=friday\n"
+             f"Exec=friday\nPath={root}\nIcon={icon}\nTerminal=true\n")
     made = []
     for d in (Path.home() / "Desktop", Path.home() / ".local/share/applications"):
         if d.is_dir() or d == Path.home() / ".local/share/applications":
@@ -469,26 +179,13 @@ def cmd_shortcut() -> int:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="friday",
-        description="Validation through enforced information asymmetry.")
-    parser.add_argument("--serve", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--port", type=int, default=8765, help=argparse.SUPPRESS)
-    win = parser.add_mutually_exclusive_group()
-    win.add_argument("--window", dest="window", action="store_true", default=None,
-                     help="open the dashboard as a standalone app window (default)")
-    win.add_argument("--no-window", dest="window", action="store_false",
-                     help="open the dashboard in the default browser tab")
+        description="A terminal you hand a goal to: Claude PMs, Codex builds.")
     sub = parser.add_subparsers(dest="command")
-    run_parser = sub.add_parser("run", help="start the cycle in background")
-    run_parser.add_argument("--attach", action="store_true", help="run in foreground")
-    sub.add_parser("status", help="print one-line file status")
+    sub.add_parser("init", help="create a friday workspace here")
+    sub.add_parser("shortcut", help="create a desktop shortcut")
     args = parser.parse_args(argv)
-
-    if args.serve:
-        from .control_server import serve
-        serve(require_root(), args.port)
-        return 0
-    if args.command is None:
-        return cmd_home(window=args.window)
-    if args.command == "run":
-        return cmd_run(attach=args.attach)
-    return cmd_status()
+    if args.command == "init":
+        return cmd_init()
+    if args.command == "shortcut":
+        return cmd_shortcut()
+    return cmd_home()

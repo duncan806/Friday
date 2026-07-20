@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "friday"
 version = "0.1.0"
-description = "Validation system: two AI agents converge on software through blockage reports under enforced information asymmetry"
+description = "A terminal you hand a goal to: Claude PMs (read-only), Codex builds (no authority) — you watch them work"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

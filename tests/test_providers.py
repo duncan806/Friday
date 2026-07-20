@@ -1,59 +1,53 @@
 import pytest
 
-import friday.providers as providers
+from friday import providers
 from friday.errors import AdapterError
 
 
-def test_advisor_success(monkeypatch):
+# ── pm_decide (Claude, read-only, structured) ────────────────────────────────
+
+def test_pm_decide_is_read_only_and_parses(monkeypatch, tmp_path):
     monkeypatch.setattr(providers.shutil, "which", lambda _: "claude")
 
     def runner(cmd, **kw):
-        assert "--permission-mode" in cmd and "bypassPermissions" in cmd
-        assert cmd[1] == "-p"
+        assert "--json-schema" in cmd
+        # Claude cannot write — read-only tools only
+        assert "--allowedTools" in cmd and "Read" in cmd and "Grep" in cmd
+        assert "Edit" not in cmd and "Write" not in cmd
 
         class R:
-            stdout = "여기 방향입니다"
+            stdout = '{"structured_output":{"action":"instruct","message":"create x.py"}}'
             stderr = ""
             returncode = 0
         return R()
 
-    assert providers.claude_advisor("안녕", runner=runner) == "여기 방향입니다"
+    d = providers.pm_decide(tmp_path, {}, "goal", "history", "last", runner=runner)
+    assert d["action"] == "instruct" and d["message"] == "create x.py"
 
 
-def test_advisor_root_refusal_surfaces(monkeypatch):
+def test_pm_decide_result_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(providers.shutil, "which", lambda _: "claude")
 
     def runner(cmd, **kw):
         class R:
-            stdout = ""
-            stderr = "--dangerously-skip-permissions cannot be used with root"
-            returncode = 1
+            stdout = '{"result":"{\\"action\\":\\"answer\\",\\"message\\":\\"hi\\"}"}'
+            stderr = ""
+            returncode = 0
         return R()
 
-    with pytest.raises(AdapterError):
-        providers.claude_advisor("안녕", runner=runner)
+    d = providers.pm_decide(tmp_path, {}, "g", "h", "l", runner=runner)
+    assert d["action"] == "answer" and d["message"] == "hi"
 
 
-def test_advisor_not_installed(monkeypatch):
+def test_pm_decide_not_installed(monkeypatch, tmp_path):
     monkeypatch.setattr(providers.shutil, "which", lambda _: None)
     with pytest.raises(AdapterError):
-        providers.claude_advisor("안녕")
+        providers.pm_decide(tmp_path, {}, "g", "h", "l")
 
 
-def test_build_engine_end_to_end(tmp_path):
-    eng = providers.build_conversation_engine(
-        tmp_path, {"convo_budget_chars": 1000}, claude_fn=lambda prompt: "그냥 대화")
-    assert eng.human_says("안녕") is None  # plain reply → no directive
+# ── codex_stream (Codex, sole writer, streamed activity) ─────────────────────
 
-
-def test_exec_summary(tmp_path):
-    (tmp_path / "status.json").write_text(
-        '{"status":"running","round":2,"rounds":[{"quadrant":"clear"}]}', encoding="utf-8")
-    s = providers.exec_summary(tmp_path)
-    assert "running" in s and "round=2" in s
-
-
-class _FakeProc:
+class _FakeCodex:
     returncode = 0
     stderr = None
 
@@ -67,56 +61,21 @@ class _FakeProc:
         pass
 
 
-def test_advisor_stream_parses_token_deltas(monkeypatch):
-    monkeypatch.setattr(providers.shutil, "which", lambda _: "claude")
-    lines = [
-        '{"type":"system","subtype":"init"}',
-        '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"hel"}}}',
-        '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"lo"}}}',
-        '{"type":"result","subtype":"success","result":"hello","is_error":false}',
-    ]
-
-    def fake_popen(cmd, **kw):
-        assert "stream-json" in cmd and "--include-partial-messages" in cmd
-        return _FakeProc(lines)
-
-    got = []
-    text = providers.claude_advisor_stream("hi", on_text=got.append, popen=fake_popen)
-    assert text == "hello"
-    assert "".join(got) == "hello"       # streamed token-by-token
-
-
-def test_gpt_assist_answers_and_strips_footer(monkeypatch):
+def test_codex_stream_parses_events_and_final(monkeypatch):
     monkeypatch.setattr(providers.shutil, "which", lambda _: "codex")
-
-    def runner(cmd, **kw):
-        assert "read-only" in cmd and "--ephemeral" in cmd
-        assert "exec" in cmd
-
-        class R:
-            stdout = "Yes, I can review code without changes.\ntokens used\n2,820"
-            stderr = ""
-            returncode = 0
-        return R()
-
-    assert providers.gpt_assist("can you review?", runner=runner) == \
-        "Yes, I can review code without changes."
+    lines = [
+        '{"type":"item.completed","item":{"type":"agent_message","text":"looking"}}',
+        '{"type":"item.started","item":{"type":"command_execution","command":"ls"}}',
+        '{"type":"item.completed","item":{"type":"agent_message","text":"done, created x"}}',
+    ]
+    events = []
+    text = providers.codex_stream("do it", on_event=events.append,
+                                  popen=lambda cmd, **kw: _FakeCodex(lines))
+    assert text == "done, created x"
+    assert any(e.get("type") == "item.started" for e in events)
 
 
-def test_gpt_assist_not_installed(monkeypatch):
+def test_codex_stream_not_installed(monkeypatch):
     monkeypatch.setattr(providers.shutil, "which", lambda _: None)
     with pytest.raises(AdapterError):
-        providers.gpt_assist("q")
-
-
-def test_advisor_stream_falls_back_to_full_message(monkeypatch):
-    monkeypatch.setattr(providers.shutil, "which", lambda _: "claude")
-    lines = [
-        '{"type":"assistant","message":{"content":[{"type":"text","text":"full reply"}]}}',
-        '{"type":"result","result":"full reply","is_error":false}',
-    ]
-    got = []
-    text = providers.claude_advisor_stream("hi", on_text=got.append,
-                                           popen=lambda cmd, **kw: _FakeProc(lines))
-    assert text == "full reply"
-    assert "".join(got) == "full reply"   # printed once as fallback
+        providers.codex_stream("x")
