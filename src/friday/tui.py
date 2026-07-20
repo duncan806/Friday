@@ -237,8 +237,8 @@ def _home(root: Path, state: dict):
     status = state.get("status") or ""
     if status and status not in ("ready", "boot"):
         print(f"  {DIM}· {status.replace('_', ' ')} · round {state.get('round', 0)}{RESET}")
-    print(f"\n  {DIM}Just talk. {ORANGE}Claude{DIM} thinks, {ICE}GPT{DIM} builds — "
-          f"you watch it happen.{RESET}")
+    print(f"\n  {DIM}{ORANGE}Claude{DIM} is PM, {ICE}Codex{DIM} builds — "
+          f"they work your goal together while you watch.{RESET}")
 
 
 def _edit_task(root: Path):
@@ -742,6 +742,103 @@ def _simple_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
         history.append(("friday", _fast_reply(root, config, ctx() + "User: " + text)))
 
 
+_PM_INSTRUCTIONS = (
+    "You are the PM. Codex is a fast builder with NO decision authority — it only executes the "
+    "one instruction you give it. You decide everything: what to do next, whether it's right, "
+    "and when it's done. Read the workspace files to check reality first. Then output ONE of:\n"
+    "- the next instruction for Codex: a direct imperative naming files and the exact change "
+    "(Codex acts only on direct imperatives, never on vague goals);\n"
+    "- 'DONE: <one-line summary>' if the goal is fully and verifiably met;\n"
+    "- 'ASK: <question>' only if you truly cannot proceed without the human.\n"
+    "Be terse — a line or two of reasoning is fine, but end with the instruction or DONE/ASK.")
+
+
+def _pm_decide(root: Path, config: dict, goal: str, history: str, last: str) -> str:
+    """Claude, the PM, reads the workspace and decides Codex's next instruction."""
+    prompt = (f"GOAL:\n{goal}\n\nWORK SO FAR:\n{history}\n\nCODEX'S LAST REPORT:\n{last}\n\n"
+              + _PM_INSTRUCTIONS)
+    return _agent_reply(root, config, prompt, label="claude", color=ORANGE)
+
+
+def _codex_do(root: Path, config: dict, instruction: str) -> str:
+    """Codex, the builder, executes the PM's instruction (no authority of its own)."""
+    prompt = ("Execute this instruction now in the workspace — read and edit files as needed. "
+              "Then report in 1-2 sentences what you did and the result. You have no authority to "
+              "change the scope; execute exactly this instruction:\n\n" + instruction)
+    return _codex_reply(root, config, prompt)
+
+
+def _steer_window(seconds: float = 1.4) -> str:
+    """Brief pause between rounds: press any key to steer, otherwise the PM↔Codex
+    loop keeps running on its own."""
+    print(f"  {DIM}(press a key to steer, or let them keep working…){RESET}", end="", flush=True)
+    start = time.monotonic()
+    hit = False
+    while time.monotonic() - start < seconds:
+        if _key():
+            hit = True
+            break
+        time.sleep(0.05)
+    print("\r" + " " * 52 + "\r", end="", flush=True)
+    if not hit:
+        return ""
+    try:
+        return input(f"  {DIM}› you:{RESET} {WHITE}").strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+    finally:
+        print(RESET, end="", flush=True)
+
+
+def _run_goal(root: Path, config: dict, goal: str, stop_fn) -> None:
+    """The core loop: Claude (PM) and Codex (builder) work together, round after
+    round, until the PM calls it done — with the human able to steer between rounds."""
+    history: list = [f"GOAL: {goal}"]
+    last = "(nothing built yet)"
+    budget = int(config.get("round_budget", 30))
+    try:
+        for n in range(1, budget + 1):
+            print(f"\n  {DIM}── round {n} ──{RESET}")
+            decision = (_pm_decide(root, config, goal, "\n".join(history[-16:]), last) or "").strip()
+            if decision.upper().startswith("DONE"):
+                print(f"  {ORANGE}✓ done{RESET}  {DIM}{decision.split(':', 1)[-1].strip()[:120]}{RESET}")
+                return
+            if decision.upper().startswith("ASK"):
+                q = decision.split(":", 1)[-1].strip()
+                try:
+                    ans = input(f"  {DIM}› {q}{RESET} {WHITE}").strip()
+                finally:
+                    print(RESET, end="", flush=True)
+                history.append(f"human: {ans}")
+                continue
+            history.append(f"PM(claude): {decision[:400]}")
+            report = _codex_do(root, config, decision)
+            history.append(f"codex: {(report or '').strip()[:400]}")
+            last = report or "(no report)"
+            steer = _steer_window()
+            if steer:
+                history.append(f"human: {steer}")
+        print(f"  {DIM}round budget reached — say more to continue.{RESET}")
+    except KeyboardInterrupt:
+        print(f"\n  {DIM}stopped{RESET}")
+
+
+def _pm_session(root: Path, config: dict, stop_fn) -> int:
+    """Set a goal; watch Claude (PM) and Codex work it together, continuously."""
+    _clear(); _header(root); _home(root, _status(root))
+    while True:
+        print(f"\n  {DIM}Give a goal — {ORANGE}Claude{DIM} (PM) directs, {ICE}Codex{DIM} builds, "
+              f"they work until it's done. Empty line to quit.{RESET}")
+        try:
+            goal = input(f"\n  {DIM}› goal:{RESET} {WHITE}").strip()
+        except (EOFError, KeyboardInterrupt):
+            print(RESET, end=""); return 0
+        print(RESET, end="", flush=True)
+        if not goal or goal.lower() in ("/quit", "/exit", "quit", "exit"):
+            return 0
+        _run_goal(root, config, goal, stop_fn)
+
+
 def run(root: Path, checks_fn, start_fn, stop_fn) -> int:
     _enable_terminal()
     if not loading(root, checks_fn):
@@ -751,7 +848,7 @@ def run(root: Path, checks_fn, start_fn, stop_fn) -> int:
     if not sys.stdin.isatty():
         print("friday ready")
         return 0
-    return _simple_loop(root, _load_cfg(root), start_fn, stop_fn)
+    return _pm_session(root, _load_cfg(root), stop_fn)
 
 
 def _validate_loop(root: Path, config: dict, start_fn, stop_fn) -> int:
